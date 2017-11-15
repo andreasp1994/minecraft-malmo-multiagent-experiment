@@ -134,7 +134,7 @@ def GetMissionInstance( mission_type, mission_seed, agent_type):
     random.seed(mission_seed)
     reward_goal = abs(round(random.gauss(1000, 400)))+0.0700
     reward_waypoint = round(abs(random.gauss(3, 15)))
-    reward_timeout = -round(abs(random.gauss(1000, 400)))-0.2000
+    reward_timeout = 0
     reward_sendcommand = round(-random.randrange(2,10))
    
     n_intermediate_rewards = random.randrange(1,5) * nir.get(mission_type, 10) # How many intermediate rewards...?
@@ -396,6 +396,9 @@ class AgentRealistic:
         self.epsillon = 0.01;
         self.gamma = 1.0;
 
+
+
+
     #----------------------------------------------------------------------------------------------------------------#       
     def __ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, noise_level):     
         """ Creates a well-defined transition model with a certain noise level """                  
@@ -412,6 +415,16 @@ class AgentRealistic:
     def stop_training(self):
         self.training = False
 
+    def run_agent_offline(self):
+        state_t = self.agent_host.getWorldState()
+        reward_cumulative = 0.0
+
+        self.prev_state = None
+        self.prev_action = None
+
+    def run_agent_online(self):
+        pass
+
     def run_agent(self):
         """ Run the Realistic agent and log the performance and resource use """       
        
@@ -421,6 +434,8 @@ class AgentRealistic:
         self.solution_report.setMissionXML(mission_xml)        
         time.sleep(1)
         self.solution_report.start()
+
+        self.run_agent_online()
 
         # INSERT YOUR SOLUTION HERE (REWARDS MUST BE UPDATED IN THE solution_report)
         #
@@ -1116,6 +1131,7 @@ if __name__ == "__main__":
     DEFAULT_MISSION_SEED_MAX = 1    #HINT: How many different instances of the given mission (i.e. maze layout)    
     DEFAULT_REPEATS      = 1        #HINT: How many repetitions of the same maze layout
     DEFAULT_PORT         = 0
+    DEFAULT_ENV         = 'dev'         #options are [dev, demo]
     DEFAULT_SAVE_PATH    = './results/'
 
     #-- Import required modules --#
@@ -1150,7 +1166,8 @@ if __name__ == "__main__":
     parser.add_argument("-x" , "--malmoport"        , type=int, help="special port for the Minecraft client", default=DEFAULT_PORT)
     parser.add_argument("-o" , "--aimapath"         , type=str, help="path for the aima toolbox (optional)"   , default=DEFAULT_AIMA_PATH)
     parser.add_argument("-r" , "--resultpath"       , type=str, help="the path where the results are saved" , default=DEFAULT_SAVE_PATH)
-    args = parser.parse_args()        
+    parser.add_argument("-e" , "--env"       , type=str, help="the environment" , default=DEFAULT_ENV)
+    args = parser.parse_args()
     print args     
 
     #-- Display infor about the system --#     
@@ -1191,7 +1208,7 @@ if __name__ == "__main__":
     for i_training_seed in range(0,args.missionseedmax):
         
         #-- Observe the full state space a prior i (only allowed for the simple agent!) ? --#
-        if args.agentname.lower()=='simple':  
+        if args.agentname.lower()=='simple' or args.env.lower() == 'dev':
             print('Get state-space representation using a AgentHelper...[note in v0.30 there is now an faster way of getting the state-space ]')            
             helper_solution_report = SolutionReport()
             helper_agent = AgentHelper(agent_host,args.malmoport,args.missiontype,i_training_seed, helper_solution_report, None)
