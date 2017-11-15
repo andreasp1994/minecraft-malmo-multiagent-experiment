@@ -6,6 +6,7 @@
  
  Solution Template (revision a)
 """
+import logging
 
 #----------------------------------------------------------------------------------------------------------------#                  
 class SolutionReport(object):     
@@ -380,6 +381,21 @@ class AgentRealistic:
         self.solution_report.setMissionType(self.mission_type)
         self.solution_report.setMissionSeed(self.mission_seed)     
 
+        self.training = True
+        self.q_table = {}
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)
+
+        ch = logging.StreamHandler(sys.stdout)
+        ch.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        ch.setFormatter(formatter)
+        self.logger.addHandler(ch)
+
+        self.alpha = 0.1;
+        self.epsillon = 0.01;
+        self.gamma = 1.0;
+
     #----------------------------------------------------------------------------------------------------------------#       
     def __ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, noise_level):     
         """ Creates a well-defined transition model with a certain noise level """                  
@@ -392,7 +408,11 @@ class AgentRealistic:
         return actual_action   
   
     #----------------------------------------------------------------------------------------------------------------#        
-    def run_agent(self):           
+
+    def stop_training(self):
+        self.training = False
+
+    def run_agent(self):
         """ Run the Realistic agent and log the performance and resource use """       
        
         #-- Load and init mission --#
@@ -408,6 +428,7 @@ class AgentRealistic:
         #       ExecuteActionForRealisticAgentWithNoisyTransitionModel(idx_requested_action, 0.05)
         #   FOR DEVELOPMENT IT IS RECOMMENDED TO FIST USE A NOISE FREE VERSION, i.e.  
         #       ExecuteActionForRealisticAgentWithNoisyTransitionModel(idx_requested_action, 0.0)
+
         self.agent_host.setObservationsPolicy(MalmoPython.ObservationsPolicy.LATEST_OBSERVATION_ONLY)
         self.agent_host.setVideoPolicy(MalmoPython.VideoPolicy.LATEST_FRAME_ONLY)
         self.agent_host.setRewardsPolicy(MalmoPython.RewardsPolicy.KEEP_ALL_REWARDS)
@@ -415,18 +436,35 @@ class AgentRealistic:
         state_t = self.agent_host.getWorldState()
         reward_cumulative = 0.0
 
+        self.prev_state = None
+        self.prev_action = None
+
+        # Check if anything went wrong along the way
+        for error in state_t.errors:
+            print("Error:", error.text)
+
+        obs = json.loads(state_t.observations[-1].text)
+        prev_x = obs[u'XPos']
+        prev_z = obs[u'ZPos']
+        print 'Initial position:', prev_x, ',', prev_z
+
+        # take first action
+        reward_cumulative += self.take_action(state_t, agent_host, 0)
+
         while state_t.is_mission_running:
-
             # Wait 0.5 sec
-            time.sleep(0.5)
+            time.sleep(0.25)
 
+            # raw_input('Press enter to continue....')
             # Get the world state
             state_t = self.agent_host.getWorldState()
 
             # Collect the number of rewards and add to reward_cumulative
             # Note: Since we only observe the sensors and environment every a number of rewards may have accumulated in the buffer
+            current_reward = 0
             for reward_t in state_t.rewards:
                 print "Reward_t:", reward_t.getValue()
+                current_reward += reward_t.getValue()
                 reward_cumulative += reward_t.getValue()
                 self.solution_report.addReward(reward_t.getValue(), datetime.datetime.now())
                 print("Cummulative reward so far:", reward_cumulative)
@@ -447,21 +485,22 @@ class AgentRealistic:
 
                 # Orcale
                 grid = oracle.get(u'grid', 0)  #
-                print grid
 
                 # GPS-like sensor
                 xpos = oracle.get(u'XPos', 0)  # Position in 2D plane, 1st axis
                 zpos = oracle.get(u'ZPos', 0)  # Position in 2D plane, 2nd axis (yes Z!)
                 ypos = oracle.get(u'YPos', 0)  # Height as measured from surface! (yes Y!)
 
+                self.logger.debug('Agent new position: %f %f' % (xpos, zpos))
+
                 # Standard "internal" sensory inputs
                 yaw = oracle.get(u'Yaw', 0)  # Yaw
                 pitch = oracle.get(u'Pitch', 0)  # Pitch
 
-            # Vision
-            if state_t.number_of_video_frames_since_last_state > 0:  # Have any Vision percepts been registred ?
-                frame = state_t.video_frames[0]
-                print frame
+                prev_x = xpos
+                prev_z = zpos
+
+                reward_cumulative += self.take_action(state_t, agent_host, current_reward)
 
             # -- Print some of the state information --#
             print("Percept: video,observations,rewards received:", state_t.number_of_video_frames_since_last_state,
@@ -470,7 +509,50 @@ class AgentRealistic:
                 yaw) + " " + str(pitch))
 
         return
- 
+
+    def take_action(self, state, agent_host, current_reward):
+
+        obs_text = state.observations[-1].text
+        obs = json.loads(obs_text)  # most recent observation
+        current_state = "%d:%d" % (int(obs[u'XPos']), int(obs[u'ZPos']))
+        self.logger.debug("State: %s (x = %.2f, z = %.2f)" % (current_state, float(obs[u'XPos']), float(obs[u'ZPos'])))
+
+        # Initialize table if not initialized
+        if not self.q_table.has_key(current_state):
+            self.q_table[current_state] = ([0.0] * len(self.AGENT_ALLOWED_ACTIONS))
+
+        # update Q values - Note frequency function is not included.
+        if self.training and self.prev_state is not None and self.prev_action is not None:
+            self.logger.debug('Updating Q Values... ( r = %f, a = %f, g = %f)' % (current_reward, self.alpha, self.gamma))
+            old_q = self.q_table[self.prev_state][self.prev_action]
+            self.q_table[self.prev_state][self.prev_action] = old_q + self.alpha * (current_reward
+                                                    + self.gamma * max(self.q_table[current_state]) - old_q)
+            self.logger.debug('Updated value %f' % self.q_table[self.prev_state][self.prev_action])
+
+        random.seed()
+        rnd = random.random()
+        if rnd < self.epsillon:
+            next_action = random.randint(0, len(self.AGENT_ALLOWED_ACTIONS) - 1)
+            self.logger.debug('Random Action: %s' % self.AGENT_ALLOWED_ACTIONS[next_action])
+        else:
+            m = max(self.q_table[current_state])
+            self.logger.debug("Current values: %s" % ",".join(str(x) for x in self.q_table[current_state]))
+
+            #if multiple actions have same utility
+            l = list()
+            for x in range(0, len(self.AGENT_ALLOWED_ACTIONS)):
+                if self.q_table[current_state][x] == m:
+                    l.append(x)
+            y = random.randint(0, len(l) - 1)
+            next_action = l[y]
+            self.logger.debug("Taking q action: %s" % self.AGENT_ALLOWED_ACTIONS[next_action])
+
+        # send the selected action
+        agent_host.sendCommand(self.AGENT_ALLOWED_ACTIONS[next_action])
+        self.prev_state = current_state
+        self.prev_action = next_action
+
+        return current_reward
 
 #--------------------------------------------------------------------------------------
 #-- This class implements the Simple Agent --#
