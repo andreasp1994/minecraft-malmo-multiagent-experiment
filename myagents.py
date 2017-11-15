@@ -395,6 +395,23 @@ class AgentRealistic:
         self.alpha = 0.1;
         self.epsillon = 0.01;
         self.gamma = 1.0;
+        self.scale = 40
+        self.world_x = 0
+        self.world_y = 0
+        if (mission_type == "small"):
+            self.world_x = 10
+            self.world_y = 10
+        elif (mission_type == "medium"):
+            self.world_x = 20
+            self.world_y = 20
+        else:
+            self.world_x = 40
+            self.world_y = 40
+        self.root = tk.Tk()
+        self.root.wm_title("Q-table")
+        self.canvas = tk.Canvas(self.root, width=self.world_x*self.scale, height=self.world_y*self.scale, borderwidth=0, highlightthickness=0, bg="black")
+        self.canvas.grid()
+        self.root.update()
 
     #----------------------------------------------------------------------------------------------------------------#       
     def __ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, noise_level):     
@@ -508,6 +525,7 @@ class AgentRealistic:
             print("\tcoordinates (x,y,z,yaw,pitch):" + str(xpos) + " " + str(ypos) + " " + str(zpos) + " " + str(
                 yaw) + " " + str(pitch))
 
+            self.drawQ()            
         return
 
     def take_action(self, state, agent_host, current_reward):
@@ -528,6 +546,8 @@ class AgentRealistic:
             self.q_table[self.prev_state][self.prev_action] = old_q + self.alpha * (current_reward
                                                     + self.gamma * max(self.q_table[current_state]) - old_q)
             self.logger.debug('Updated value %f' % self.q_table[self.prev_state][self.prev_action])
+
+        self.drawQ( curr_x = int(obs[u'XPos']), curr_y = int(obs[u'ZPos']) )
 
         random.seed()
         rnd = random.random()
@@ -553,6 +573,41 @@ class AgentRealistic:
         self.prev_action = next_action
 
         return current_reward
+    
+    def drawQ( self, curr_x=None, curr_y=None):
+        if self.canvas is None or self.root is None:
+            return
+        self.canvas.delete("all")
+        action_inset = 0.1
+        action_radius = 0.1
+        curr_radius = 0.2
+        action_positions = [ ( 0.5, 1-action_inset ), ( 0.5, action_inset ), ( 1-action_inset, 0.5 ), ( action_inset, 0.5 ) ]
+        # (NSWE to match action order)
+        min_value = -20
+        max_value = 20
+        for x in range(self.world_x):
+            for y in range(self.world_y):
+                s = "%d:%d" % (x,y)
+                self.canvas.create_rectangle( (self.world_x-1-x)*self.scale, (self.world_y-1-y)*self.scale, (self.world_x-1-x+1)*self.scale, (self.world_y-1-y+1)*self.scale, outline="#fff", fill="#000")
+                for action in range(4):
+                    if not s in self.q_table:
+                        continue
+                    value = self.q_table[s][action]
+                    color = 255 * ( value - min_value ) / ( max_value - min_value ) # map value to 0-255
+                    color = max( min( color, 255 ), 0 ) # ensure within [0,255]
+                    color_string = '#%02x%02x%02x' % (255-color, color, 0)
+                    self.canvas.create_oval( (self.world_x - 1 - x + action_positions[action][0] - action_radius ) *self.scale,
+                                             (self.world_y - 1 - y + action_positions[action][1] - action_radius ) *self.scale,
+                                             (self.world_x - 1 - x + action_positions[action][0] + action_radius ) *self.scale,
+                                             (self.world_y - 1 - y + action_positions[action][1] + action_radius ) *self.scale, 
+                                             outline=color_string, fill=color_string )
+        if curr_x is not None and curr_y is not None:
+            self.canvas.create_oval( (self.world_x - 1 - curr_x + 0.5 - curr_radius ) * self.scale, 
+                                     (self.world_y - 1 - curr_y + 0.5 - curr_radius ) * self.scale, 
+                                     (self.world_x - 1 - curr_x + 0.5 + curr_radius ) * self.scale, 
+                                     (self.world_y - 1 - curr_y + 0.5 + curr_radius ) * self.scale, 
+                                     outline="#fff", fill="#fff" )
+        self.root.update()
 
 #--------------------------------------------------------------------------------------
 #-- This class implements the Simple Agent --#
@@ -1106,12 +1161,11 @@ class AgentHelper:
 #-- The main entry point if you run the module as a script--#
 if __name__ == "__main__":     
 
-
     #-- Define default arguments, in case you run the module as a script --#
-    DEFAULT_STUDENT_GUID = '2140845p'
+    DEFAULT_STUDENT_GUID = '2126280p'
     DEFAULT_AGENT_NAME   = 'Realistic' #HINT: Currently choose between {Random,Simple, Realistic}
-    DEFAULT_MALMO_PATH   = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/Malmo-0.30.0-Mac-64bit_withBoost/' # HINT: Change this to your own path
-    DEFAULT_AIMA_PATH    = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/aima-python/'  # HINT: Change this to your own path, forward slash only, should be the 2.7 version from https://www.dropbox.com/s/vulnv2pkbv8q92u/aima-python_python_v27_r001.zip?dl=0) or for Python 3.x get it from https://github.com/aimacode/aima-python
+    DEFAULT_MALMO_PATH   = '/home/sanilo/Desktop/Level4/AI/tools/Malmo/' # HINT: Change this to your own path
+    DEFAULT_AIMA_PATH    = '/home/sanilo/Desktop/Level4/AI/tools/aima-python/'  # HINT: Change this to your own path, forward slash only, should be the 2.7 version from https://www.dropbox.com/s/vulnv2pkbv8q92u/aima-python_python_v27_r001.zip?dl=0) or for Python 3.x get it from https://github.com/aimacode/aima-python
     DEFAULT_MISSION_TYPE = 'small'  #HINT: Choose between {small,medium,large}
     DEFAULT_MISSION_SEED_MAX = 1    #HINT: How many different instances of the given mission (i.e. maze layout)    
     DEFAULT_REPEATS      = 1        #HINT: How many repetitions of the same maze layout
@@ -1137,6 +1191,7 @@ if __name__ == "__main__":
     import matplotlib.image as mpimg
     import networkx as nx    
     from matplotlib import lines
+    import Tkinter as tk
 
             
     #-- Define the commandline arguments required to run the agents from command line --#
@@ -1198,21 +1253,22 @@ if __name__ == "__main__":
             helper_agent.run_agent()
         else:
             helper_agent = None            
+       
+        solution_report = SolutionReport()
+        print('Get an instance of the specific ' + args.agentname + ' agent with the agent_host and load the ' + args.missiontype + ' mission with seed ' + str(i_training_seed))
+        agent_name = 'Agent' + args.agentname        
+        state_space = None;
+        if not helper_agent==None:
+            state_space = deepcopy(helper_agent.state_space)                            
         
+        agent_to_be_evaluated = eval(agent_name+'(agent_host,args.malmoport,args.missiontype,i_training_seed,solution_report,state_space)') 
+
         #-- Repeat the same instance (size and seed) multiple times --#
         for i_rep in range(0,args.nrepeats):                                   
             print('Setup the performance log...')
-            solution_report = SolutionReport()
+            
             solution_report.setStudentGuid(args.studentguid)
             
-            print('Get an instance of the specific ' + args.agentname + ' agent with the agent_host and load the ' + args.missiontype + ' mission with seed ' + str(i_training_seed))
-            agent_name = 'Agent' + args.agentname        
-            state_space = None;
-            if not helper_agent==None:
-                state_space = deepcopy(helper_agent.state_space)                            
-            
-            agent_to_be_evaluated = eval(agent_name+'(agent_host,args.malmoport,args.missiontype,i_training_seed,solution_report,state_space)') 
-    
             print('Run the agent, time it and log the performance...')
             solution_report.start() # start the timer (may be overwritten in the agent to provide a fair comparison)            
             agent_to_be_evaluated.run_agent()                  
