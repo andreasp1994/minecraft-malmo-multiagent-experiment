@@ -383,6 +383,7 @@ class AgentRealistic:
 
         self.training = True
         self.q_table = {}
+        self.Nsa = {}
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
 
@@ -392,11 +393,13 @@ class AgentRealistic:
         ch.setFormatter(formatter)
         self.logger.addHandler(ch)
 
-        self.alpha = 0.1;
-        self.epsillon = 0.01;
+        self.alpha = lambda n: 1./(1+n)
+        self.epsillon = 0.05;
         self.gamma = 1.0;
         self.scale = 40
         self.world_x = 0
+        self.Ne = 1
+        self.RPlus = 0
         self.world_y = 0
         if (mission_type == "small"):
             self.world_x = 10
@@ -412,6 +415,12 @@ class AgentRealistic:
         self.canvas = tk.Canvas(self.root, width=self.world_x*self.scale, height=self.world_y*self.scale, borderwidth=0, highlightthickness=0, bg="black")
         self.canvas.grid()
         self.root.update()
+
+    def f(self, u, n):
+        if (n < self.Ne):
+            return self.RPlus
+        else:
+            return u
 
     #----------------------------------------------------------------------------------------------------------------#       
     def __ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, noise_level):     
@@ -472,7 +481,7 @@ class AgentRealistic:
             # Wait 0.5 sec
             time.sleep(0.25)
 
-            # raw_input('Press enter to continue....')
+            raw_input('Press enter to continue....')
             # Get the world state
             state_t = self.agent_host.getWorldState()
 
@@ -530,6 +539,7 @@ class AgentRealistic:
 
     def take_action(self, state, agent_host, current_reward):
 
+        alpha, Nsa = self.alpha, self.Nsa
         obs_text = state.observations[-1].text
         obs = json.loads(obs_text)  # most recent observation
         current_state = "%d:%d" % (int(obs[u'XPos']), int(obs[u'ZPos']))
@@ -539,12 +549,17 @@ class AgentRealistic:
         if not self.q_table.has_key(current_state):
             self.q_table[current_state] = ([0.0] * len(self.AGENT_ALLOWED_ACTIONS))
 
-        # update Q values - Note frequency function is not included.
+        if not Nsa.has_key(current_state):
+            Nsa[current_state] = ([0] * len(self.AGENT_ALLOWED_ACTIONS))
+        elif self.prev_action is not None:
+            Nsa[current_state][self.prev_action] += 1
+
+        # update Q values - Note frequency function is included now.
         if self.training and self.prev_state is not None and self.prev_action is not None:
-            self.logger.debug('Updating Q Values... ( r = %f, a = %f, g = %f)' % (current_reward, self.alpha, self.gamma))
+            self.logger.debug('Updating Q Values... ( r = %f, a = %f, g = %f)' % (current_reward, alpha(Nsa[self.prev_state][self.prev_action]), self.gamma))
             old_q = self.q_table[self.prev_state][self.prev_action]
-            self.q_table[self.prev_state][self.prev_action] = old_q + self.alpha * (current_reward
-                                                    + self.gamma * max(self.q_table[current_state]) - old_q)
+            self.q_table[self.prev_state][self.prev_action] = old_q + alpha(Nsa[self.prev_state][self.prev_action]) * (current_reward
+                            + self.gamma * max(self.q_table[current_state]) - old_q)
             self.logger.debug('Updated value %f' % self.q_table[self.prev_state][self.prev_action])
 
         self.drawQ( curr_x = int(obs[u'XPos']), curr_y = int(obs[u'ZPos']) )
@@ -555,16 +570,23 @@ class AgentRealistic:
             next_action = random.randint(0, len(self.AGENT_ALLOWED_ACTIONS) - 1)
             self.logger.debug('Random Action: %s' % self.AGENT_ALLOWED_ACTIONS[next_action])
         else:
-            m = max(self.q_table[current_state])
+            test = ([self.f(self.q_table[current_state][ac],Nsa[current_state][ac])] for ac in range(0,4))
+            self.logger.debug("F return: %s" % ",".join(str(x) for x in test))
+            items = range(0,4)
+            random.shuffle(items)
+            next_action = max(items, key=lambda ac: self.f(self.q_table[current_state][ac],Nsa[current_state][ac]))
+            #m = max(self.q_table[current_state])
+            self.logger.debug("Next action: %d" % next_action)
+            print(self.q_table[current_state][next_action])
             self.logger.debug("Current values: %s" % ",".join(str(x) for x in self.q_table[current_state]))
 
             #if multiple actions have same utility
-            l = list()
-            for x in range(0, len(self.AGENT_ALLOWED_ACTIONS)):
-                if self.q_table[current_state][x] == m:
-                    l.append(x)
-            y = random.randint(0, len(l) - 1)
-            next_action = l[y]
+            # l = list()
+            # for x in range(0, len(self.AGENT_ALLOWED_ACTIONS)):
+            #     if self.q_table[current_state][x] == m:
+            #         l.append(x)
+            # y = random.randint(0, len(l) - 1)
+            # next_action = l[y]
             self.logger.debug("Taking q action: %s" % self.AGENT_ALLOWED_ACTIONS[next_action])
 
         # send the selected action
