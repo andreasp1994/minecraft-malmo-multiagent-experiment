@@ -392,32 +392,14 @@ class AgentRealistic:
         ch.setFormatter(formatter)
         self.logger.addHandler(ch)
 
-        self.alpha = 0.1;
+        self.alpha = 0.5;
         self.epsillon = 0.01;
         self.gamma = 1.0;
-        self.scale = 40
-        self.world_x = 0
-        self.world_y = 0
-        if (mission_type == "small"):
-            self.world_x = 10
-            self.world_y = 10
-        elif (mission_type == "medium"):
-            self.world_x = 20
-            self.world_y = 20
-        else:
-            self.world_x = 40
-            self.world_y = 40
-        self.root = tk.Tk()
-        self.root.wm_title("Q-table")
-        self.canvas = tk.Canvas(self.root, width=self.world_x*self.scale, height=self.world_y*self.scale, borderwidth=0, highlightthickness=0, bg="black")
-        self.canvas.grid()
-        self.root.update()
+        self.create_canvas(mission_type)
 
+        self.state_space = state_space_graph
 
-
-
-    #----------------------------------------------------------------------------------------------------------------#       
-    def __ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, noise_level):     
+    def __ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, noise_level):
         """ Creates a well-defined transition model with a certain noise level """                  
         n = len(self.AGENT_ALLOWED_ACTIONS)     
         pp = noise_level/(n-1) * np.ones((n,1))
@@ -432,35 +414,81 @@ class AgentRealistic:
     def stop_training(self):
         self.training = False
 
+    def create_canvas(self, mission_type):
+        self.scale = 40
+        self.world_x = 0
+        self.world_y = 0
+        # Set world dimensions for visualization
+        if (mission_type == "small"):
+            self.world_x = 10
+            self.world_y = 10
+        elif (mission_type == "medium"):
+            self.world_x = 20
+            self.world_y = 20
+        else:
+            self.world_x = 40
+            self.world_y = 40
+
+        self.root = tk.Tk()
+        self.root.wm_title("Q-table")
+        self.canvas = tk.Canvas(self.root, width=self.world_x * self.scale, height=self.world_y * self.scale,
+                                borderwidth=0, highlightthickness=0, bg="black")
+        self.canvas.grid()
+        self.root.update()
+
     def run_agent_offline(self):
-        state_t = self.agent_host.getWorldState()
+        reward_sendcommand = -5
+        reward_goal = 1000
+
         reward_cumulative = 0.0
 
         self.prev_state = None
         self.prev_action = None
 
+        actions = [(0,-1), (0, 1), (-1, 0), (1, 0)]
+        iterations = 200
+        prev_x = 8
+        prex_z = 0
+        goal_x = 7
+        goal_z = 5
+        state = (prev_x, prex_z)
+        prev_state = state
+        state_str = "S_%d_%d" % (int(prev_x), int(prex_z))
+        goal_state = [goal_x, goal_z]
+
+        r = 0
+        a = self.offline_update_table_get_action(r, state_str, prev_x, prex_z)
+        state = map(sum, zip(state, actions[a]))
+        state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
+        if not (self.state_space.state_actions[self.prev_state].has_key(state_str)):
+            state = prev_state
+            state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
+
+        i = 0
+        while(i < iterations):
+
+            r = reward_sendcommand
+            if (state == goal_state):
+                r += reward_goal
+                a = self.offline_update_table_get_action(r, state_str, state[0], state[1])
+                break
+
+            a = self.offline_update_table_get_action(r, state_str, state[0], state[1])
+
+            prev_state = state
+            state = map(sum, zip(state, actions[a]))
+            state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
+            if not (self.state_space.state_actions[self.prev_state].has_key(state_str)):
+                state = prev_state
+                state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
+
+            i += 1
+            self.drawQ()
+
+        print self.state_space.__dict__;
+
     def run_agent_online(self):
-        pass
-
-    def run_agent(self):
-        """ Run the Realistic agent and log the performance and resource use """       
-       
-        #-- Load and init mission --#
-        print('Generate and load the ' + self.mission_type + ' mission with seed ' + str(self.mission_seed) + ' allowing ' +  self.AGENT_MOVEMENT_TYPE + ' movements')            
-        mission_xml = init_mission(self.agent_host, self.agent_port, self.AGENT_NAME, self.mission_type, self.mission_seed, self.AGENT_MOVEMENT_TYPE)            
-        self.solution_report.setMissionXML(mission_xml)        
-        time.sleep(1)
-        self.solution_report.start()
-
-        self.run_agent_online()
-
         # INSERT YOUR SOLUTION HERE (REWARDS MUST BE UPDATED IN THE solution_report)
-        #
-        # NOTICE: YOUR FINAL AGENT MUST MAKE USE OF THE FOLLOWING NOISY TRANSISION MODEL  
-        #       ExecuteActionForRealisticAgentWithNoisyTransitionModel(idx_requested_action, 0.05)
-        #   FOR DEVELOPMENT IT IS RECOMMENDED TO FIST USE A NOISE FREE VERSION, i.e.  
-        #       ExecuteActionForRealisticAgentWithNoisyTransitionModel(idx_requested_action, 0.0)
-
         self.agent_host.setObservationsPolicy(MalmoPython.ObservationsPolicy.LATEST_OBSERVATION_ONLY)
         self.agent_host.setVideoPolicy(MalmoPython.VideoPolicy.LATEST_FRAME_ONLY)
         self.agent_host.setRewardsPolicy(MalmoPython.RewardsPolicy.KEEP_ALL_REWARDS)
@@ -540,8 +568,24 @@ class AgentRealistic:
             print("\tcoordinates (x,y,z,yaw,pitch):" + str(xpos) + " " + str(ypos) + " " + str(zpos) + " " + str(
                 yaw) + " " + str(pitch))
 
-            self.drawQ()            
+            self.drawQ()
         return
+
+    def run_agent(self):
+        """ Run the Realistic agent and log the performance and resource use """       
+       
+        #-- Load and init mission --#
+        print('Generate and load the ' + self.mission_type + ' mission with seed ' + str(self.mission_seed) + ' allowing ' +  self.AGENT_MOVEMENT_TYPE + ' movements')            
+        mission_xml = init_mission(self.agent_host, self.agent_port, self.AGENT_NAME, self.mission_type, self.mission_seed, self.AGENT_MOVEMENT_TYPE)            
+        self.solution_report.setMissionXML(mission_xml)        
+        time.sleep(1)
+        self.solution_report.start()
+
+        if (self.state_space is not None):
+            for i in range(0,50):
+                self.run_agent_offline()
+        else:
+            self.run_agent_online()
 
     def take_action(self, state, agent_host, current_reward):
 
@@ -562,7 +606,7 @@ class AgentRealistic:
                                                     + self.gamma * max(self.q_table[current_state]) - old_q)
             self.logger.debug('Updated value %f' % self.q_table[self.prev_state][self.prev_action])
 
-        self.drawQ( curr_x = int(obs[u'XPos']), curr_y = int(obs[u'ZPos']) )
+        self.drawQ(curr_x=int(obs[u'XPos']),curr_y = int(obs[u'ZPos']))
 
         random.seed()
         rnd = random.random()
@@ -588,7 +632,42 @@ class AgentRealistic:
         self.prev_action = next_action
 
         return current_reward
-    
+
+    def offline_update_table_get_action(self, current_reward, state, x, y):
+        self.logger.debug("State: %s (x = %.2f, z = %.2f)" % (state, x, y))
+        if not self.q_table.has_key(state):
+            self.q_table[state] = ([0.0] * len(self.AGENT_ALLOWED_ACTIONS))
+
+        # update Q values - Note frequency function is not included.
+        if self.training and self.prev_state is not None and self.prev_action is not None:
+            self.logger.debug('Updating Q Values... ( r = %f, a = %f, g = %f)' % (current_reward, self.alpha, self.gamma))
+            old_q = self.q_table[self.prev_state][self.prev_action]
+            self.q_table[self.prev_state][self.prev_action] = old_q + self.alpha * (current_reward+ self.gamma * max(self.q_table[state]) - old_q)
+            self.logger.debug('Updated value %f' % self.q_table[self.prev_state][self.prev_action])
+
+        self.drawQ(curr_x=x, curr_y=y)
+
+        random.seed()
+        rnd = random.random()
+        if rnd < self.epsillon:
+            next_action = random.randint(0, len(self.AGENT_ALLOWED_ACTIONS) - 1)
+            self.logger.debug('Random Action: %s' % self.AGENT_ALLOWED_ACTIONS[next_action])
+        else:
+            m = max(self.q_table[state])
+            self.logger.debug("Current values: %s" % ",".join(str(x) for x in self.q_table[state]))
+            # if multiple actions have same utility
+            l = list()
+            for x in range(0, len(self.AGENT_ALLOWED_ACTIONS)):
+                if self.q_table[state][x] == m:
+                    l.append(x)
+            y = random.randint(0, len(l) - 1)
+            next_action = l[y]
+            self.logger.debug("Taking q action: %s" % self.AGENT_ALLOWED_ACTIONS[next_action])
+
+        self.prev_action = next_action
+        self.prev_state = state
+        return next_action
+
     def drawQ( self, curr_x=None, curr_y=None):
         if self.canvas is None or self.root is None:
             return
@@ -602,7 +681,7 @@ class AgentRealistic:
         max_value = 20
         for x in range(self.world_x):
             for y in range(self.world_y):
-                s = "%d:%d" % (x,y)
+                s = "S_%d_%d" % (x,y)
                 self.canvas.create_rectangle( (self.world_x-1-x)*self.scale, (self.world_y-1-y)*self.scale, (self.world_x-1-x+1)*self.scale, (self.world_y-1-y+1)*self.scale, outline="#fff", fill="#000")
                 for action in range(4):
                     if not s in self.q_table:
@@ -624,7 +703,6 @@ class AgentRealistic:
                                      outline="#fff", fill="#fff" )
         self.root.update()
 
-#--------------------------------------------------------------------------------------
 #-- This class implements the Simple Agent --#
 class AgentSimple:
       
@@ -658,8 +736,6 @@ class AgentSimple:
         self.agent_host.setRewardsPolicy(MalmoPython.RewardsPolicy.KEEP_ALL_REWARDS)
 
         # INSERT: YOUR SOLUTION HERE (REMEMBER TO MANUALLY UPDATE THE solution_report DEPENDING ON YOU SOLUTION)
-
-
         # initialise a graph
         maze_map = UndirectedGraph(state_space.state_actions)
 
@@ -887,7 +963,6 @@ class AgentSimple:
         return None
 
 
-#--------------------------------------------------------------------------------------
 #-- This class implements a basic, suboptimal Random Agent. The purpurpose is to provide a baseline for other agent to beat. --#
 class AgentRandom:
     
@@ -1179,13 +1254,13 @@ if __name__ == "__main__":
     #-- Define default arguments, in case you run the module as a script --#
     DEFAULT_STUDENT_GUID = '2126280p'
     DEFAULT_AGENT_NAME   = 'Realistic' #HINT: Currently choose between {Random,Simple, Realistic}
-    DEFAULT_MALMO_PATH   = '/home/sanilo/Desktop/Level4/AI/tools/Malmo/' # HINT: Change this to your own path
-    DEFAULT_AIMA_PATH    = '/home/sanilo/Desktop/Level4/AI/tools/aima-python/'  # HINT: Change this to your own path, forward slash only, should be the 2.7 version from https://www.dropbox.com/s/vulnv2pkbv8q92u/aima-python_python_v27_r001.zip?dl=0) or for Python 3.x get it from https://github.com/aimacode/aima-python
+    DEFAULT_MALMO_PATH   = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/Malmo-0.30.0-Mac-64bit_withBoost/' # HINT: Change this to your own path
+    DEFAULT_AIMA_PATH    = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/aima-python/'  # HINT: Change this to your own path, forward slash only, should be the 2.7 version from https://www.dropbox.com/s/vulnv2pkbv8q92u/aima-python_python_v27_r001.zip?dl=0) or for Python 3.x get it from https://github.com/aimacode/aima-python
     DEFAULT_MISSION_TYPE = 'small'  #HINT: Choose between {small,medium,large}
     DEFAULT_MISSION_SEED_MAX = 1    #HINT: How many different instances of the given mission (i.e. maze layout)    
     DEFAULT_REPEATS      = 1        #HINT: How many repetitions of the same maze layout
     DEFAULT_PORT         = 0
-    DEFAULT_ENV         = 'dev'         #options are [dev, demo]
+    DEFAULT_ENV          = 'env'
     DEFAULT_SAVE_PATH    = './results/'
 
     #-- Import required modules --#
@@ -1221,7 +1296,7 @@ if __name__ == "__main__":
     parser.add_argument("-x" , "--malmoport"        , type=int, help="special port for the Minecraft client", default=DEFAULT_PORT)
     parser.add_argument("-o" , "--aimapath"         , type=str, help="path for the aima toolbox (optional)"   , default=DEFAULT_AIMA_PATH)
     parser.add_argument("-r" , "--resultpath"       , type=str, help="the path where the results are saved" , default=DEFAULT_SAVE_PATH)
-    parser.add_argument("-e" , "--env"       , type=str, help="the environment" , default=DEFAULT_ENV)
+    parser.add_argument("-e" , "--env"       , type=str, help="the path where the results are saved" , default=DEFAULT_ENV)
     args = parser.parse_args()
     print args     
 
@@ -1242,11 +1317,6 @@ if __name__ == "__main__":
     #-- Import the Malmo Python wrapper/module --#
     print('Import the Malmo module...')
     import MalmoPython
-
-    #-- OPTIONAL: Import the AIMA tools (for representing the state-space)--#
-    #print('Add AIMA lib to the Python environment ['+args.aimapath+']')
-    #sys.path.append(args.aimapath+'/')    
-    #from search import *
     
     #-- Create the command line string for convenience --#
     cmd = 'python myagents.py -a ' + args.agentname + ' -s ' + str(args.missionseedmax) + ' -n ' + str(args.nrepeats) + ' -t ' + args.missiontype + ' -g ' + args.studentguid + ' -p ' + args.malmopath + ' -x ' + str(args.malmoport)
@@ -1263,7 +1333,7 @@ if __name__ == "__main__":
     for i_training_seed in range(0,args.missionseedmax):
         
         #-- Observe the full state space a prior i (only allowed for the simple agent!) ? --#
-        if args.agentname.lower()=='simple' or args.env.lower() == 'dev':
+        if args.agentname.lower()=='simple' or args.env.lower()=='env':
             print('Get state-space representation using a AgentHelper...[note in v0.30 there is now an faster way of getting the state-space ]')            
             helper_solution_report = SolutionReport()
             helper_agent = AgentHelper(agent_host,args.malmoport,args.missiontype,i_training_seed, helper_solution_report, None)
