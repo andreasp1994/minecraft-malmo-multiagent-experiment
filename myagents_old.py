@@ -6,6 +6,7 @@
  
  Solution Template (revision a)
 """
+import logging
 
 #----------------------------------------------------------------------------------------------------------------#                  
 class SolutionReport(object):     
@@ -133,7 +134,7 @@ def GetMissionInstance( mission_type, mission_seed, agent_type):
     random.seed(mission_seed)
     reward_goal = abs(round(random.gauss(1000, 400)))+0.0700
     reward_waypoint = round(abs(random.gauss(3, 15)))
-    reward_timeout = -round(abs(random.gauss(1000, 400)))-0.2000
+    reward_timeout = 0
     reward_sendcommand = round(-random.randrange(2,10))
    
     n_intermediate_rewards = random.randrange(1,5) * nir.get(mission_type, 10) # How many intermediate rewards...?
@@ -255,11 +256,12 @@ def init_mission(agent_host, port=0, agent_type='Unknown',mission_type='Unknown'
                        
     #-- Get the resulting xml (and return in order to check that conditions match the report) --#
     final_xml = my_mission.getAsXML(True)
-               
+
     # Set up a recording for later inspection
     my_mission_record = MalmoPython.MissionRecordSpec('tmp' + ".tgz")
     my_mission_record.recordRewards()
     my_mission_record.recordMP4(24,400000)
+
 
     #-- Attempt to start a mission --#
     max_retries = 5
@@ -289,6 +291,77 @@ def init_mission(agent_host, port=0, agent_type='Unknown',mission_type='Unknown'
     return final_xml,reward_goal,reward_intermediate,n_intermediate_rewards,reward_timeout,reward_sendcommand,timeout
 
 
+def show_map(node_colors, G, locations, node_labels, node_label_pos, edge_labels):
+    # set the size of the plot
+    plt.figure(figsize=(16, 13))
+    # draw the graph (both nodes and edges) with locations
+    nx.draw(G, pos=locations, node_color=[node_colors[node] for node in G.nodes()])
+
+    # draw labels for nodes
+    node_label_handles = nx.draw_networkx_labels(G, pos=node_label_pos, labels=node_labels, font_size=9)
+    # add a white bounding box behind the node labels
+    [label.set_bbox(dict(facecolor='white', edgecolor='none')) for label in node_label_handles.values()]
+
+    # add edge lables to the graph
+    nx.draw_networkx_edge_labels(G, pos=locations, edge_labels=edge_labels, font_size=8)
+
+    # add a legend
+    white_circle = lines.Line2D([], [], color="white", marker='o', markersize=15, markerfacecolor="white")
+    orange_circle = lines.Line2D([], [], color="white", marker='o', markersize=15, markerfacecolor="orange")
+    red_circle = lines.Line2D([], [], color="white", marker='o', markersize=15, markerfacecolor="red")
+    gray_circle = lines.Line2D([], [], color="white", marker='o', markersize=15, markerfacecolor="gray")
+    green_circle = lines.Line2D([], [], color="white", marker='o', markersize=15, markerfacecolor="green")
+    plt.legend((white_circle, orange_circle, red_circle, gray_circle, green_circle),
+               ('Un-explored', 'Frontier', 'Currently exploring', 'Explored', 'Solution path'),
+               numpoints=1, prop={'size': 16}, loc=(.8, 1.0))
+    plt.show()
+
+
+def final_path_colors(problem, solution, initial_node_colors):
+    "returns a node_colors dict of the final path provided the problem and solution"
+
+    # get initial node colors
+    final_colors = dict(initial_node_colors)
+    # color all the nodes in solution and starting node to green
+    final_colors[problem.initial] = "green"
+    for node in solution:
+        final_colors[node] = "green"
+    return final_colors
+
+
+def display_visual(user_input, algorithm=None, problem=None):
+    if user_input == False:
+        def slider_callback(iteration):
+            # don't show graph for the first time running the cell calling this function
+            try:
+                show_map(all_node_colors[iteration])
+            except:
+                pass
+
+        def visualize_callback(Visualize):
+            if Visualize is True:
+                button.value = False
+
+                global all_node_colors
+
+                iterations, all_node_colors, node = algorithm(problem)
+                solution = node.solution()
+                all_node_colors.append(final_path_colors(problem, solution))
+
+                slider.max = len(all_node_colors) - 1
+
+                for i in range(slider.max + 1):
+                    slider.value = i
+                    # time.sleep(3.)
+
+        slider = widgets.IntSlider(min=0, max=1, step=1, value=0)
+        slider_visual = widgets.interactive(slider_callback, iteration=slider)
+        display(slider_visual)
+
+        button = widgets.ToggleButton(value=False)
+        button_visual = widgets.interactive(visualize_callback, Visualize=button)
+        display(button_visual)
+
 #--------------------------------------------------------------------------------------
 #-- This class implements the Realistic Agent --#
 class AgentRealistic:
@@ -303,10 +376,10 @@ class AgentRealistic:
         self.agent_port = agent_port
         self.mission_seed = mission_seed
         self.mission_type = mission_type        
-        self.state_space = None; # NOTE: The Realistic can not know anything about the state_space a prior i !
-        self.solution_report = solution_report;   # Python is call by reference !     
+        self.state_space = None # NOTE: The Realistic can not know anything about the state_space a prior i !
+        self.solution_report = solution_report  # Python is call by reference !
         self.solution_report.setMissionType(self.mission_type)
-        self.solution_report.setMissionSeed(self.mission_seed)
+        self.solution_report.setMissionSeed(self.mission_seed)     
 
         self.training = True
         self.q_table = {}
@@ -319,13 +392,12 @@ class AgentRealistic:
         ch.setFormatter(formatter)
         self.logger.addHandler(ch)
 
-        self.alpha = 0.1
-        self.epsillon = 0.01
-        self.gamma = 1.0
+        self.alpha = 0.5;
+        self.epsillon = 0.01;
+        self.gamma = 1.0;
+        self.create_canvas(mission_type)
+
         self.state_space = state_space_graph
-        self.q_learning_agent = QLearningAgent(self.AGENT_ALLOWED_ACTIONS, self.gamma, 4, 1700 )
-        self.q_learning_visualization = QLearningVisualization(mission_type, self.q_learning_agent.Q,
-                                                               self.AGENT_ALLOWED_ACTIONS)
 
     def __ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, noise_level):
         """ Creates a well-defined transition model with a certain noise level """                  
@@ -335,137 +407,302 @@ class AgentRealistic:
         idx_actual = np.random.choice(n, 1, p=pp.flatten()) # sample from the distribution of actions 
         actual_action = self.AGENT_ALLOWED_ACTIONS[int(idx_actual)]         
         self.agent_host.sendCommand(actual_action) 
-        return actual_action
+        return actual_action   
+  
+    #----------------------------------------------------------------------------------------------------------------#        
 
     def stop_training(self):
         self.training = False
 
-    def run_agent(self):           
-        """ Run the Realistic agent and log the performance and resource use """
-        self.load_and_init_mission()
+    def create_canvas(self, mission_type):
+        self.scale = 40
+        self.world_x = 0
+        self.world_y = 0
+        # Set world dimensions for visualization
+        if (mission_type == "small"):
+            self.world_x = 10
+            self.world_y = 10
+        elif (mission_type == "medium"):
+            self.world_x = 20
+            self.world_y = 20
+        else:
+            self.world_x = 40
+            self.world_y = 40
 
+        self.root = tk.Tk()
+        self.root.wm_title("Q-table")
+        self.canvas = tk.Canvas(self.root, width=self.world_x * self.scale, height=self.world_y * self.scale,
+                                borderwidth=0, highlightthickness=0, bg="black")
+        self.canvas.grid()
+        self.root.update()
 
+    def run_agent_offline(self):
+        reward_sendcommand = -5
+        reward_goal = 1000
+
+        reward_cumulative = 0.0
+
+        self.prev_state = None
+        self.prev_action = None
+
+        actions = [(0,-1), (0, 1), (-1, 0), (1, 0)]
+        iterations = 200
+        prev_x = 8
+        prex_z = 0
+        goal_x = 7
+        goal_z = 5
+        state = (prev_x, prex_z)
+        prev_state = state
+        state_str = "S_%d_%d" % (int(prev_x), int(prex_z))
+        goal_state = [goal_x, goal_z]
+
+        r = 0
+        a = self.offline_update_table_get_action(r, state_str, prev_x, prex_z)
+        state = map(sum, zip(state, actions[a]))
+        state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
+        if not (self.state_space.state_actions[self.prev_state].has_key(state_str)):
+            state = prev_state
+            state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
+
+        i = 0
+        while(i < iterations):
+
+            r = reward_sendcommand
+            if (state == goal_state):
+                r += reward_goal
+                a = self.offline_update_table_get_action(r, state_str, state[0], state[1])
+                break
+
+            a = self.offline_update_table_get_action(r, state_str, state[0], state[1])
+
+            prev_state = state
+            state = map(sum, zip(state, actions[a]))
+            state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
+            if not (self.state_space.state_actions[self.prev_state].has_key(state_str)):
+                state = prev_state
+                state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
+
+            i += 1
+            self.drawQ()
+
+        print self.state_space.__dict__;
+
+    def run_agent_online(self):
         # INSERT YOUR SOLUTION HERE (REWARDS MUST BE UPDATED IN THE solution_report)
-        #
-        # NOTICE: YOUR FINAL AGENT MUST MAKE USE OF THE FOLLOWING NOISY TRANSISION MODEL  
-        #       ExecuteActionForRealisticAgentWithNoisyTransitionModel(idx_requested_action, 0.05)
-        #   FOR DEVELOPMENT IT IS RECOMMENDED TO FIST USE A NOISE FREE VERSION, i.e.  
-        #       ExecuteActionForRealisticAgentWithNoisyTransitionModel(idx_requested_action, 0.0)
-
-        # INSERT YOUR SOLUTION HERE (REWARDS MUST BE UPDATED IN THE solution_report)
-
         self.agent_host.setObservationsPolicy(MalmoPython.ObservationsPolicy.LATEST_OBSERVATION_ONLY)
         self.agent_host.setVideoPolicy(MalmoPython.VideoPolicy.LATEST_FRAME_ONLY)
         self.agent_host.setRewardsPolicy(MalmoPython.RewardsPolicy.KEEP_ALL_REWARDS)
+
         state_t = self.agent_host.getWorldState()
         reward_cumulative = 0.0
-        initial_x, initial_z = self.get_agent_position(state_t)
-        self.logger.debug('Initial position: %s, %s' % (initial_x, initial_z))
 
-        # if (self.state_space is not None):
-        for i in range(30):
-            self.run_agent_offline(initial_x, initial_z)
+        self.prev_state = None
+        self.prev_action = None
 
-        raw_input('Press enter to continue...')
-
-            # else:
-        #     pass
-            # self.run_agent_online()
-        return
-
-    def get_agent_position(self, state_t):
         # Check if anything went wrong along the way
         for error in state_t.errors:
-            self.logger.debug("Error:", error.text)
+            print("Error:", error.text)
 
         obs = json.loads(state_t.observations[-1].text)
-        x = obs[u'XPos']
-        z = obs[u'ZPos']
-        return x, z
+        prev_x = obs[u'XPos']
+        prev_z = obs[u'ZPos']
+        print 'Initial position:', prev_x, ',', prev_z
 
-    def run_agent_offline(self, initial_x, initial_z):
-        self.logger.debug('Running agent offline...')
-        reward_sendcommand = self.state_space.reward_sendcommand
-        reward_goal = self.state_space.reward_states[self.state_space.goal_id]
-        state = (int(initial_x), int(initial_z))
-        state_str = "S_%d_%d" % (int(initial_x), int(initial_z))
-        goal_state = [self.state_space.goal_loc[0], self.state_space.goal_loc[1]]
-        reward = 0
+        # take first action
+        reward_cumulative += self.take_action(state_t, agent_host, 0)
 
-        # self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
-        # self.logger.debug('Updating Q table...')
-        # action = self.q_learning_agent((state_str, reward))
-        # self.logger.debug('%s' % action)
-        # state, state_str = self.update_state_offline(state, action)
-        # self.logger.debug('New agent state: %s, %s', state[0], state[1])
-        # self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
+        while state_t.is_mission_running:
+            # Wait 0.5 sec
+            time.sleep(0.25)
 
-        iterations = 400    #Simulate timeout
-        i = 0
-        while(i < iterations):
-            # Simulate perception
-            percept = {}
-            percept['state'] = state_str
-            percept['reward'] = reward
-            percept['state_actions'] = []
-            for action in state_space.state_actions[state_str].keys():
-                action_slpit = action.split('_')
-                action_tuple = (int(action_slpit[1]), int(action_slpit[2]))
-                if action_tuple[0] < state[0]:
-                    percept['state_actions'].append("movewest 1")
-                elif action_tuple[0] > state[0]:
-                    percept['state_actions'].append("moveeast 1")
-                elif action_tuple[1] < state[1]:
-                    percept['state_actions'].append("movenorth 1")
-                else:
-                    percept['state_actions'].append("movesouth 1")
+            # raw_input('Press enter to continue....')
+            # Get the world state
+            state_t = self.agent_host.getWorldState()
 
-            if (state == goal_state):
-                reward += reward_goal
-                percept['reward'] = reward
-                self.logger.debug('Got to goal! Reward: %s' % reward)
-                self.q_learning_agent.finished(reward)
-                self.q_learning_agent(percept)
-                self.q_learning_agent.reset()
-                self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
-                # raw_input('Press enter to continue...')
+            # Collect the number of rewards and add to reward_cumulative
+            # Note: Since we only observe the sensors and environment every a number of rewards may have accumulated in the buffer
+            current_reward = 0
+            for reward_t in state_t.rewards:
+                print "Reward_t:", reward_t.getValue()
+                current_reward += reward_t.getValue()
+                reward_cumulative += reward_t.getValue()
+                self.solution_report.addReward(reward_t.getValue(), datetime.datetime.now())
+                print("Cummulative reward so far:", reward_cumulative)
 
-                break
+            # Check if anything went wrong along the way
+            for error in state_t.errors:
+                print("Error:", error.text)
 
-            print percept
-            self.logger.debug('Updating Q table...')
-            a = self.q_learning_agent(percept)
-            self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
-            self.logger.debug('Taking action: %s' % a)
-            state, state_str = self.update_state_offline(state, a)
-            reward = reward_sendcommand
-            self.logger.debug('New agent state: %s, %s', state[0], state[1])
-            self.q_learning_visualization.drawQ()
-            i += 1
+            # Handle the sensor input
+            xpos = None
+            ypos = None
+            zpos = None
+            yaw = None
+            pitch = None
+            if state_t.number_of_observations_since_last_state > 0:  # Has any Oracle-like and/or internal sensor observations come in?
+                msg = state_t.observations[-1].text  # Get the detailed for the last observed state
+                oracle = json.loads(msg)  # Parse the Oracle JSON
 
-            # raw_input('Press enter to continue...')
+                # Orcale
+                grid = oracle.get(u'grid', 0)  #
 
-    def update_state_offline(self, state, action):
-        state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
-        action_simulations = {"movenorth 1": (0,-1), "movesouth 1": (0, 1), "movewest 1": (-1, 0), "moveeast 1": (1, 0)}
-        new_state = map(sum, zip(state, action_simulations[action]))
-        new_state_str = "S_%d_%d" % (int(new_state[0]), int(new_state[1]))
-        if not (self.state_space.state_actions[state_str].has_key(new_state_str)):
-            return state, state_str
-        return new_state, new_state_str
+                # GPS-like sensor
+                xpos = oracle.get(u'XPos', 0)  # Position in 2D plane, 1st axis
+                zpos = oracle.get(u'ZPos', 0)  # Position in 2D plane, 2nd axis (yes Z!)
+                ypos = oracle.get(u'YPos', 0)  # Height as measured from surface! (yes Y!)
 
-    def load_and_init_mission(self):
-        # -- Load and init mission --#
-        print('Generate and load the ' + self.mission_type + ' mission with seed ' + str(
-            self.mission_seed) + ' allowing ' + self.AGENT_MOVEMENT_TYPE + ' movements')
-        mission_xml = init_mission(self.agent_host, self.agent_port, self.AGENT_NAME, self.mission_type,
-                                   self.mission_seed, self.AGENT_MOVEMENT_TYPE)
-        self.solution_report.setMissionXML(mission_xml)
+                self.logger.debug('Agent new position: %f %f' % (xpos, zpos))
+
+                # Standard "internal" sensory inputs
+                yaw = oracle.get(u'Yaw', 0)  # Yaw
+                pitch = oracle.get(u'Pitch', 0)  # Pitch
+
+                prev_x = xpos
+                prev_z = zpos
+
+                reward_cumulative += self.take_action(state_t, agent_host, current_reward)
+
+            # -- Print some of the state information --#
+            print("Percept: video,observations,rewards received:", state_t.number_of_video_frames_since_last_state,
+                  state_t.number_of_observations_since_last_state, state_t.number_of_rewards_since_last_state)
+            print("\tcoordinates (x,y,z,yaw,pitch):" + str(xpos) + " " + str(ypos) + " " + str(zpos) + " " + str(
+                yaw) + " " + str(pitch))
+
+            self.drawQ()
+        return
+
+    def run_agent(self):
+        """ Run the Realistic agent and log the performance and resource use """       
+       
+        #-- Load and init mission --#
+        print('Generate and load the ' + self.mission_type + ' mission with seed ' + str(self.mission_seed) + ' allowing ' +  self.AGENT_MOVEMENT_TYPE + ' movements')            
+        mission_xml = init_mission(self.agent_host, self.agent_port, self.AGENT_NAME, self.mission_type, self.mission_seed, self.AGENT_MOVEMENT_TYPE)            
+        self.solution_report.setMissionXML(mission_xml)        
         time.sleep(1)
         self.solution_report.start()
 
+        if (self.state_space is not None):
+            for i in range(0,50):
+                self.run_agent_offline()
+        else:
+            self.run_agent_online()
 
-#--------------------------------------------------------------------------------------
+    def take_action(self, state, agent_host, current_reward):
+
+        obs_text = state.observations[-1].text
+        obs = json.loads(obs_text)  # most recent observation
+        current_state = "%d:%d" % (int(obs[u'XPos']), int(obs[u'ZPos']))
+        self.logger.debug("State: %s (x = %.2f, z = %.2f)" % (current_state, float(obs[u'XPos']), float(obs[u'ZPos'])))
+
+        # Initialize table if not initialized
+        if not self.q_table.has_key(current_state):
+            self.q_table[current_state] = ([0.0] * len(self.AGENT_ALLOWED_ACTIONS))
+
+        # update Q values - Note frequency function is not included.
+        if self.training and self.prev_state is not None and self.prev_action is not None:
+            self.logger.debug('Updating Q Values... ( r = %f, a = %f, g = %f)' % (current_reward, self.alpha, self.gamma))
+            old_q = self.q_table[self.prev_state][self.prev_action]
+            self.q_table[self.prev_state][self.prev_action] = old_q + self.alpha * (current_reward
+                                                    + self.gamma * max(self.q_table[current_state]) - old_q)
+            self.logger.debug('Updated value %f' % self.q_table[self.prev_state][self.prev_action])
+
+        self.drawQ(curr_x=int(obs[u'XPos']),curr_y = int(obs[u'ZPos']))
+
+        random.seed()
+        rnd = random.random()
+        if rnd < self.epsillon:
+            next_action = random.randint(0, len(self.AGENT_ALLOWED_ACTIONS) - 1)
+            self.logger.debug('Random Action: %s' % self.AGENT_ALLOWED_ACTIONS[next_action])
+        else:
+            m = max(self.q_table[current_state])
+            self.logger.debug("Current values: %s" % ",".join(str(x) for x in self.q_table[current_state]))
+
+            #if multiple actions have same utility
+            l = list()
+            for x in range(0, len(self.AGENT_ALLOWED_ACTIONS)):
+                if self.q_table[current_state][x] == m:
+                    l.append(x)
+            y = random.randint(0, len(l) - 1)
+            next_action = l[y]
+            self.logger.debug("Taking q action: %s" % self.AGENT_ALLOWED_ACTIONS[next_action])
+
+        # send the selected action
+        agent_host.sendCommand(self.AGENT_ALLOWED_ACTIONS[next_action])
+        self.prev_state = current_state
+        self.prev_action = next_action
+
+        return current_reward
+
+    def offline_update_table_get_action(self, current_reward, state, x, y):
+        self.logger.debug("State: %s (x = %.2f, z = %.2f)" % (state, x, y))
+        if not self.q_table.has_key(state):
+            self.q_table[state] = ([0.0] * len(self.AGENT_ALLOWED_ACTIONS))
+
+        # update Q values - Note frequency function is not included.
+        if self.training and self.prev_state is not None and self.prev_action is not None:
+            self.logger.debug('Updating Q Values... ( r = %f, a = %f, g = %f)' % (current_reward, self.alpha, self.gamma))
+            old_q = self.q_table[self.prev_state][self.prev_action]
+            self.q_table[self.prev_state][self.prev_action] = old_q + self.alpha * (current_reward+ self.gamma * max(self.q_table[state]) - old_q)
+            self.logger.debug('Updated value %f' % self.q_table[self.prev_state][self.prev_action])
+
+        self.drawQ(curr_x=x, curr_y=y)
+
+        random.seed()
+        rnd = random.random()
+        if rnd < self.epsillon:
+            next_action = random.randint(0, len(self.AGENT_ALLOWED_ACTIONS) - 1)
+            self.logger.debug('Random Action: %s' % self.AGENT_ALLOWED_ACTIONS[next_action])
+        else:
+            m = max(self.q_table[state])
+            self.logger.debug("Current values: %s" % ",".join(str(x) for x in self.q_table[state]))
+            # if multiple actions have same utility
+            l = list()
+            for x in range(0, len(self.AGENT_ALLOWED_ACTIONS)):
+                if self.q_table[state][x] == m:
+                    l.append(x)
+            y = random.randint(0, len(l) - 1)
+            next_action = l[y]
+            self.logger.debug("Taking q action: %s" % self.AGENT_ALLOWED_ACTIONS[next_action])
+
+        self.prev_action = next_action
+        self.prev_state = state
+        return next_action
+
+    def drawQ( self, curr_x=None, curr_y=None):
+        if self.canvas is None or self.root is None:
+            return
+        self.canvas.delete("all")
+        action_inset = 0.1
+        action_radius = 0.1
+        curr_radius = 0.2
+        action_positions = [ ( 0.5, 1-action_inset ), ( 0.5, action_inset ), ( 1-action_inset, 0.5 ), ( action_inset, 0.5 ) ]
+        # (NSWE to match action order)
+        min_value = -20
+        max_value = 20
+        for x in range(self.world_x):
+            for y in range(self.world_y):
+                s = "S_%d_%d" % (x,y)
+                self.canvas.create_rectangle( (self.world_x-1-x)*self.scale, (self.world_y-1-y)*self.scale, (self.world_x-1-x+1)*self.scale, (self.world_y-1-y+1)*self.scale, outline="#fff", fill="#000")
+                for action in range(4):
+                    if not s in self.q_table:
+                        continue
+                    value = self.q_table[s][action]
+                    color = 255 * ( value - min_value ) / ( max_value - min_value ) # map value to 0-255
+                    color = max( min( color, 255 ), 0 ) # ensure within [0,255]
+                    color_string = '#%02x%02x%02x' % (255-color, color, 0)
+                    self.canvas.create_oval( (self.world_x - 1 - x + action_positions[action][0] - action_radius ) *self.scale,
+                                             (self.world_y - 1 - y + action_positions[action][1] - action_radius ) *self.scale,
+                                             (self.world_x - 1 - x + action_positions[action][0] + action_radius ) *self.scale,
+                                             (self.world_y - 1 - y + action_positions[action][1] + action_radius ) *self.scale, 
+                                             outline=color_string, fill=color_string )
+        if curr_x is not None and curr_y is not None:
+            self.canvas.create_oval( (self.world_x - 1 - curr_x + 0.5 - curr_radius ) * self.scale, 
+                                     (self.world_y - 1 - curr_y + 0.5 - curr_radius ) * self.scale, 
+                                     (self.world_x - 1 - curr_x + 0.5 + curr_radius ) * self.scale, 
+                                     (self.world_y - 1 - curr_y + 0.5 + curr_radius ) * self.scale, 
+                                     outline="#fff", fill="#fff" )
+        self.root.update()
+
 #-- This class implements the Simple Agent --#
 class AgentSimple:
       
@@ -479,43 +716,123 @@ class AgentSimple:
         self.mission_seed = mission_seed
         self.mission_type = mission_type        
         self.state_space = state_space; 
-        self.solution_report = solution_report  # Python calls by reference !
+        self.solution_report = solution_report;  # Python calls by reference !     
         self.solution_report.setMissionType(self.mission_type)
         self.solution_report.setMissionSeed(self.mission_seed)     
-        self.init_logger()
 
     def run_agent(self):   
         """ Run the Simple agent and log the performance and resource use """                
-        self.logger.debug('Running Simple agent...')
-        self.load_and_init_mission()
-        maze_map = self.create_graph(True)
+        
+        #-- Load and init mission --#
+        print('Generate and load the ' + self.mission_type + ' mission with seed ' + str(self.mission_seed) + ' allowing ' +  self.AGENT_MOVEMENT_TYPE + ' movements')            
+        mission_xml = init_mission(self.agent_host, self.agent_port, self.AGENT_NAME, self.mission_type, self.mission_seed, self.AGENT_MOVEMENT_TYPE)            
+        self.solution_report.setMissionXML(mission_xml)        
+        time.sleep(1)
+        self.solution_report.start()
+
+        # -- Define local capabilities of the agent (sensors)--#
+        self.agent_host.setObservationsPolicy(MalmoPython.ObservationsPolicy.LATEST_OBSERVATION_ONLY)
+        self.agent_host.setVideoPolicy(MalmoPython.VideoPolicy.LATEST_FRAME_ONLY)
+        self.agent_host.setRewardsPolicy(MalmoPython.RewardsPolicy.KEEP_ALL_REWARDS)
+
+        # INSERT: YOUR SOLUTION HERE (REMEMBER TO MANUALLY UPDATE THE solution_report DEPENDING ON YOU SOLUTION)
+        # initialise a graph
+        maze_map = UndirectedGraph(state_space.state_actions)
+
+        G = nx.Graph()
+
+        node_labels = dict()
+        node_colors = dict()
+
+        for n, p in state_space.state_locations.items():
+            G.add_node(n)  # add nodes from locations
+            node_labels[n] = n  # add nodes to node_labels
+            node_colors[n] = "white"  # node_colors to color nodes while exploring the map
+
+        # we'll save the initial node colors to a dict for later use
+        self.initial_node_colors = dict(node_colors)
+
+        # positions for node labels
+        node_label_pos = {k: [v[0], v[1] - 0.25] for k, v in
+                          state_space.state_locations.items()}  # spec the position of the labels relative to the nodes
+
+        # use this while labeling edges
+        edge_labels = dict()
+
+        # add edges between nodes in the map - UndirectedGraph defined in search.py
+        for node in maze_map.nodes():
+            connections = maze_map.get(node)
+            for connection in connections.keys():
+                distance = connections[connection]
+                G.add_edge(node, connection)  # add edges to the graph
+                edge_labels[(node, connection)] = distance  # add distances to edge_labels
+
+        print("Done creating the graph object")
+        # show_map(node_colors, G, state_space.state_locations, node_labels, node_label_pos, edge_labels)
+
         initial_state = 'S_' + str(state_space.start_loc[0]) + '_' + str(state_space.start_loc[1])
         goal_state = 'S_' + str(state_space.goal_loc[0]) + '_' + str(state_space.goal_loc[1])
-        solution = self.solve_graph_problem(maze_map, initial_state, goal_state, True)
-        self.execute_solution_on_agent(solution)
-        return
 
-    def execute_solution_on_agent(self, solution_path_local):
+
+        maze_problem = GraphProblem(initial_state, goal_state, maze_map)
+        print("Initial state:" + maze_problem.initial)
+        print("Goal state:" + maze_problem.goal)
+
+        all_node_colors = []
+        iterations, all_node_colors, node = self.astar_search(problem=maze_problem, h=None)
+
+        # -- Trace the solution --#
+        solution_path = [node]
+        cnode = node.parent
+        solution_path.append(cnode)
+        while cnode.state != initial_state:
+            cnode = cnode.parent
+            solution_path.append(cnode)
+
+        print("----------------------------------------")
+        print("Identified goal state:" + str(solution_path[0]))
+        print("----------------------------------------")
+        print("Solution trace:" + str(solution_path))
+        print("----------------------------------------")
+        print("Final solution path:")
+
+        show_map(final_path_colors(maze_problem, node.solution(), self.initial_node_colors), G, state_space.state_locations, node_labels, node_label_pos, edge_labels)
+
+        solution_path_local = deepcopy(solution_path)
         reward_cumulative = 0.0
         state_t = self.agent_host.getWorldState()
 
         x_old = state_space.start_loc[0]
         z_old = state_space.start_loc[1]
         while state_t.is_mission_running:
+
             target_node = solution_path_local.pop()
             try:
                 print("Action_t: Goto state " + target_node.state)
                 xz_new = state_space.state_locations.get(target_node.state)
                 x_new = xz_new[0]
                 z_new = xz_new[1]
-                agent_command = self.get_command_from_coords(x_old, z_old, x_new, z_new)
-                if (agent_command != None):
-                    self.agent_host.sendCommand(agent_command)
+                if x_old == x_new and z_old == z_new:
+                    pass
+                else:
+                    if x_new > x_old:
+                        command = "moveeast"
+                    elif x_new < x_old:
+                        command = "movewest"
+                    elif z_new > z_old:
+                        command = "movesouth"
+                    else:
+                        command = "movenorth"
+
+                    self.agent_host.sendCommand(command + " 1")
                     x_old = x_new
                     z_old = z_new
+
+
             except RuntimeError as e:
                 print "Failed to send command:", e
                 pass
+
             # Wait 0.5 sec
             time.sleep(0.5)
 
@@ -567,51 +884,6 @@ class AgentSimple:
                 yaw) + " " + str(pitch))
 
         return
-
-    def get_command_from_coords(self, x_old, z_old, x_new, z_new):
-        if x_old == x_new and z_old == z_new:
-            return None
-        else:
-            if x_new > x_old:
-                command = "moveeast 1"
-            elif x_new < x_old:
-                command = "movewest 1"
-            elif z_new > z_old:
-                command = "movesouth 1"
-            else:
-                command = "movenorth 1"
-        return  command
-
-    def solve_graph_problem(self, maze_map, initial_state, goal_state, visualize):
-        maze_problem = GraphProblem(initial_state, goal_state, maze_map)
-
-        self.logger.debug('Solving graph problem...')
-        self.logger.debug("Initial state:" + maze_problem.initial)
-        self.logger.debug("Goal state:" + maze_problem.goal)
-
-        all_node_colors = []
-        iterations, all_node_colors, node = self.astar_search(problem=maze_problem, h=None)
-        # -- Trace the solution --#
-        solution_path = [node]
-        cnode = node.parent
-        solution_path.append(cnode)
-        while cnode.state != initial_state:
-            cnode = cnode.parent
-            solution_path.append(cnode)
-
-        self.logger.debug("----------------------------------------")
-        self.logger.debug("Identified goal state:" + str(solution_path[0]))
-        self.logger.debug("----------------------------------------")
-        self.logger.debug("Solution trace:" + str(solution_path))
-        self.logger.debug("----------------------------------------")
-        self.logger.debug("Final solution path:")
-
-        node_colors = self.final_path_colors(maze_problem, node.solution(), self.initial_node_colors)
-        if visualize:
-            self.logger.debug("Visualizing graph solution...")
-            self.show_map_graph(self.G, state_space.state_locations, node_colors, self.node_labels,
-                                self.node_label_pos, self.edge_labels)
-        return deepcopy(solution_path)
 
     def astar_search(self, problem, h=None):
         """A* search is best-first graph search with f(n) = g(n)+h(n).
@@ -690,84 +962,7 @@ class AgentSimple:
             all_node_colors.append(dict(node_colors))
         return None
 
-    def create_graph(self, visualize):
-        maze_map = UndirectedGraph(state_space.state_actions)
-        self.G = nx.Graph()
-        self.node_labels = dict()
-        node_colors = dict()
 
-        for n, p in state_space.state_locations.items():
-            self.G.add_node(n)  # add nodes from locations
-            self.node_labels[n] = n  # add nodes to node_labels
-            node_colors[n] = "white"  # node_colors to color nodes while exploring the map
-
-        self.initial_node_colors = dict(node_colors)
-        self.node_label_pos = {k: [v[0], v[1] - 0.25] for k, v in state_space.state_locations.items()}  # spec the position of the labels relative to the nodes
-        self.edge_labels = dict()
-        # add edges between nodes in the map - UndirectedGraph defined in search.py
-        for node in maze_map.nodes():
-            connections = maze_map.get(node)
-            for connection in connections.keys():
-                distance = connections[connection]
-                self.G.add_edge(node, connection)  # add edges to the graph
-                self.edge_labels[(node, connection)] = distance  # add distances to edge_labels
-
-        self.logger.debug("Done creating the graph object")
-
-        if visualize:
-            self.logger.debug("Showing graph visualization")
-            self.show_map_graph(self.G, state_space.state_locations, node_colors, self.node_labels, self.node_label_pos, self.edge_labels)
-
-        return maze_map
-
-    def load_and_init_mission(self):
-        # -- Load and init mission --#
-        print('Generate and load the ' + self.mission_type + ' mission with seed ' + str(
-            self.mission_seed) + ' allowing ' + self.AGENT_MOVEMENT_TYPE + ' movements')
-        mission_xml = init_mission(self.agent_host, self.agent_port, self.AGENT_NAME, self.mission_type,
-                                   self.mission_seed, self.AGENT_MOVEMENT_TYPE)
-        self.solution_report.setMissionXML(mission_xml)
-        time.sleep(1)
-        self.solution_report.start()
-
-    def show_map_graph(self, G, locations, node_colors, node_labels, node_label_pos, edge_labels):
-        plt.figure(figsize=(16, 13))
-        nx.draw(G, pos=locations, node_color=[node_colors[node] for node in G.nodes()])
-        node_label_handles = nx.draw_networkx_labels(G, pos=node_label_pos, labels=node_labels, font_size=9)
-        [label.set_bbox(dict(facecolor='white', edgecolor='none')) for label in node_label_handles.values()]
-        nx.draw_networkx_edge_labels(G, pos=locations, edge_labels=edge_labels, font_size=8)
-        white_circle = lines.Line2D([], [], color="white", marker='o', markersize=15, markerfacecolor="white")
-        orange_circle = lines.Line2D([], [], color="white", marker='o', markersize=15, markerfacecolor="orange")
-        red_circle = lines.Line2D([], [], color="white", marker='o', markersize=15, markerfacecolor="red")
-        gray_circle = lines.Line2D([], [], color="white", marker='o', markersize=15, markerfacecolor="gray")
-        green_circle = lines.Line2D([], [], color="white", marker='o', markersize=15, markerfacecolor="green")
-        plt.legend((white_circle, orange_circle, red_circle, gray_circle, green_circle),
-                   ('Un-explored', 'Frontier', 'Currently exploring', 'Explored', 'Solution path'),
-                   numpoints=1, prop={'size': 16}, loc=(.8, 1.0))
-        plt.show()
-
-    def final_path_colors(self, problem, solution, initial_node_colors):
-        "returns a node_colors dict of the final path provided the problem and solution"
-
-        # get initial node colors
-        final_colors = dict(initial_node_colors)
-        # color all the nodes in solution and starting node to green
-        final_colors[problem.initial] = "green"
-        for node in solution:
-            final_colors[node] = "green"
-        return final_colors
-
-    def init_logger(self):
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.DEBUG)
-        ch = logging.StreamHandler(sys.stdout)
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        self.logger.addHandler(ch)
-
-
-#--------------------------------------------------------------------------------------
 #-- This class implements a basic, suboptimal Random Agent. The purpurpose is to provide a baseline for other agent to beat. --#
 class AgentRandom:
     
@@ -827,7 +1022,7 @@ class AgentRandom:
                 print("Requested Action:",self.AGENT_ALLOWED_ACTIONS[actionIdx])
                 
                 # Now try to execute the action givne a noisy transition model
-                actual_action = self.__ExecuteActionForRandomAgentWithNoisyTransitionModel__(actionIdx, 0.05);
+                actual_action = self.__ExecuteActionForRandomAgentWithNoisyTransitionModel__(actionIdx, 0.00);
                 print("Actual Action:",actual_action)
                                        
             # Collect the number of rewards and add to reward_cumulative
@@ -1057,14 +1252,15 @@ class AgentHelper:
 if __name__ == "__main__":     
 
     #-- Define default arguments, in case you run the module as a script --#
-    DEFAULT_STUDENT_GUID = '2140845P'
-    DEFAULT_AGENT_NAME   = 'Realistic'
+    DEFAULT_STUDENT_GUID = '2126280p'
+    DEFAULT_AGENT_NAME   = 'Simple' #HINT: Currently choose between {Random,Simple, Realistic}
     DEFAULT_MALMO_PATH   = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/Malmo-0.30.0-Mac-64bit_withBoost/' # HINT: Change this to your own path
     DEFAULT_AIMA_PATH    = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/aima-python/'  # HINT: Change this to your own path, forward slash only, should be the 2.7 version from https://www.dropbox.com/s/vulnv2pkbv8q92u/aima-python_python_v27_r001.zip?dl=0) or for Python 3.x get it from https://github.com/aimacode/aima-python
-    DEFAULT_MISSION_TYPE = 'medium'  #HINT: Choose between {small,medium,large}
+    DEFAULT_MISSION_TYPE = 'small'  #HINT: Choose between {small,medium,large}
     DEFAULT_MISSION_SEED_MAX = 1    #HINT: How many different instances of the given mission (i.e. maze layout)    
     DEFAULT_REPEATS      = 1        #HINT: How many repetitions of the same maze layout
     DEFAULT_PORT         = 0
+    DEFAULT_ENV          = 'env'
     DEFAULT_SAVE_PATH    = './results/'
 
     #-- Import required modules --#
@@ -1079,17 +1275,16 @@ if __name__ == "__main__":
     import datetime
     import math 
     import numpy as np
-    from copy import deepcopy
-    import logging
+    from copy import deepcopy 
     import hashlib
     import numpy as np
     import matplotlib.pyplot as plt
     import matplotlib.image as mpimg
     import networkx as nx    
     from matplotlib import lines
-    from QLearningVisualization import QLearningVisualization
-    from QLearningAgent import QLearningAgent
+    import Tkinter as tk
 
+            
     #-- Define the commandline arguments required to run the agents from command line --#
     parser = argparse.ArgumentParser()
     parser.add_argument("-a" , "--agentname"        , type=str, help="path for the malmo pyhton examples"   , default=DEFAULT_AGENT_NAME)
@@ -1101,7 +1296,8 @@ if __name__ == "__main__":
     parser.add_argument("-x" , "--malmoport"        , type=int, help="special port for the Minecraft client", default=DEFAULT_PORT)
     parser.add_argument("-o" , "--aimapath"         , type=str, help="path for the aima toolbox (optional)"   , default=DEFAULT_AIMA_PATH)
     parser.add_argument("-r" , "--resultpath"       , type=str, help="the path where the results are saved" , default=DEFAULT_SAVE_PATH)
-    args = parser.parse_args()        
+    parser.add_argument("-e" , "--env"       , type=str, help="the path where the results are saved" , default=DEFAULT_ENV)
+    args = parser.parse_args()
     print args     
 
     #-- Display infor about the system --#     
@@ -1110,7 +1306,10 @@ if __name__ == "__main__":
     print("malmopath:"+args.malmopath)
     print("JAVA_HOME:'"+os.environ["JAVA_HOME"]+"'")
     print("MALMO_XSD_PATH:'"+os.environ["MALMO_XSD_PATH"]+"'")
-        
+
+    sys.path.append(DEFAULT_AIMA_PATH)
+    from search import *
+
     #-- Add the Malmo path  --#
     print('Add Malmo Python API/lib to the Python environment ['+args.malmopath+'/Python_Examples'+']')    
     sys.path.append(args.malmopath+'Python_Examples/') 
@@ -1118,11 +1317,6 @@ if __name__ == "__main__":
     #-- Import the Malmo Python wrapper/module --#
     print('Import the Malmo module...')
     import MalmoPython
-
-    # -- OPTIONAL: Import the AIMA tools (for representing the state-space)--#
-    print('Add AIMA lib to the Python environment ['+args.aimapath+']')
-    sys.path.append(args.aimapath+'/')
-    from search import *
     
     #-- Create the command line string for convenience --#
     cmd = 'python myagents.py -a ' + args.agentname + ' -s ' + str(args.missionseedmax) + ' -n ' + str(args.nrepeats) + ' -t ' + args.missiontype + ' -g ' + args.studentguid + ' -p ' + args.malmopath + ' -x ' + str(args.malmoport)
@@ -1139,28 +1333,29 @@ if __name__ == "__main__":
     for i_training_seed in range(0,args.missionseedmax):
         
         #-- Observe the full state space a prior i (only allowed for the simple agent!) ? --#
-        if args.agentname.lower()=='simple' or args.agentname.lower()=='realistic':
+        if args.agentname.lower()=='simple' or args.env.lower()=='env':
             print('Get state-space representation using a AgentHelper...[note in v0.30 there is now an faster way of getting the state-space ]')            
             helper_solution_report = SolutionReport()
             helper_agent = AgentHelper(agent_host,args.malmoport,args.missiontype,i_training_seed, helper_solution_report, None)
             helper_agent.run_agent()
         else:
             helper_agent = None            
+       
+        solution_report = SolutionReport()
+        print('Get an instance of the specific ' + args.agentname + ' agent with the agent_host and load the ' + args.missiontype + ' mission with seed ' + str(i_training_seed))
+        agent_name = 'Agent' + args.agentname        
+        state_space = None;
+        if not helper_agent==None:
+            state_space = deepcopy(helper_agent.state_space)                            
         
+        agent_to_be_evaluated = eval(agent_name+'(agent_host,args.malmoport,args.missiontype,i_training_seed,solution_report,state_space)') 
+
         #-- Repeat the same instance (size and seed) multiple times --#
         for i_rep in range(0,args.nrepeats):                                   
             print('Setup the performance log...')
-            solution_report = SolutionReport()
+            
             solution_report.setStudentGuid(args.studentguid)
             
-            print('Get an instance of the specific ' + args.agentname + ' agent with the agent_host and load the ' + args.missiontype + ' mission with seed ' + str(i_training_seed))
-            agent_name = 'Agent' + args.agentname        
-            state_space = None;
-            if not helper_agent==None:
-                state_space = deepcopy(helper_agent.state_space)                            
-            
-            agent_to_be_evaluated = eval(agent_name+'(agent_host,args.malmoport,args.missiontype,i_training_seed,solution_report,state_space)') 
-    
             print('Run the agent, time it and log the performance...')
             solution_report.start() # start the timer (may be overwritten in the agent to provide a fair comparison)            
             agent_to_be_evaluated.run_agent()                  
