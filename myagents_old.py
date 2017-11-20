@@ -481,7 +481,7 @@ class AgentRealistic:
             if not (self.state_space.state_actions[self.prev_state].has_key(state_str)):
                 state = prev_state
                 state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
-
+            #
             i += 1
             self.drawQ()
 
@@ -735,7 +735,6 @@ class AgentSimple:
         self.agent_host.setVideoPolicy(MalmoPython.VideoPolicy.LATEST_FRAME_ONLY)
         self.agent_host.setRewardsPolicy(MalmoPython.RewardsPolicy.KEEP_ALL_REWARDS)
 
-        # INSERT: YOUR SOLUTION HERE (REMEMBER TO MANUALLY UPDATE THE solution_report DEPENDING ON YOU SOLUTION)
         # initialise a graph
         maze_map = UndirectedGraph(state_space.state_actions)
 

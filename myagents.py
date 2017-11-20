@@ -96,6 +96,7 @@ class StateSpace(object):
         self.reward_sendcommand = None
         self.reward_timeout = None               
         self.timeout = None
+        self.intermediate_reward_states = None
 
 
 #----------------------------------------------------------------------------------------------------------------#                  
@@ -309,33 +310,30 @@ class AgentRealistic:
         self.solution_report.setMissionSeed(self.mission_seed)
 
         self.training = True
-        self.q_table = {}
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.DEBUG)
+        self.init_logger()
+        self.visualize = False
 
-        ch = logging.StreamHandler(sys.stdout)
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        self.logger.addHandler(ch)
-
-        self.alpha = 0.1
-        self.epsillon = 0.01
-        self.gamma = 1.0
+        self.gamma = 0.5
         self.state_space = state_space_graph
-        self.q_learning_agent = QLearningAgent(self.AGENT_ALLOWED_ACTIONS, self.gamma, 4, 1700 )
-        self.q_learning_visualization = QLearningVisualization(mission_type, self.q_learning_agent.Q,
-                                                               self.AGENT_ALLOWED_ACTIONS)
+        self.q_learning_agent = QLearningAgent(self.AGENT_ALLOWED_ACTIONS, self.gamma, 3, 1500)
+        self.q_learning_visualization = None
 
-    def __ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, noise_level):
+    def __ExecuteActionForRealisticAgentWithNoisyTransitionModel__(self, idx_requested_action, noise_level):
         """ Creates a well-defined transition model with a certain noise level """                  
         n = len(self.AGENT_ALLOWED_ACTIONS)     
         pp = noise_level/(n-1) * np.ones((n,1))
-        pp[idx_request_action] = 1.0 - noise_level
+        pp[idx_requested_action] = 1.0 - noise_level
         idx_actual = np.random.choice(n, 1, p=pp.flatten()) # sample from the distribution of actions 
         actual_action = self.AGENT_ALLOWED_ACTIONS[int(idx_actual)]         
-        self.agent_host.sendCommand(actual_action) 
+        if self.state_space == None:    # That means we are using online training
+            self.agent_host.sendCommand(actual_action)
         return actual_action
+
+    def set_visualize(self, visualize):
+        self.visualize = visualize
+        if self.visualize:
+            self.q_learning_visualization = QLearningVisualization(self.mission_type, self.q_learning_agent.Q,
+                                                                   self.AGENT_ALLOWED_ACTIONS)
 
     def stop_training(self):
         self.training = False
@@ -344,33 +342,19 @@ class AgentRealistic:
         """ Run the Realistic agent and log the performance and resource use """
         self.load_and_init_mission()
 
-
-        # INSERT YOUR SOLUTION HERE (REWARDS MUST BE UPDATED IN THE solution_report)
-        #
-        # NOTICE: YOUR FINAL AGENT MUST MAKE USE OF THE FOLLOWING NOISY TRANSISION MODEL  
-        #       ExecuteActionForRealisticAgentWithNoisyTransitionModel(idx_requested_action, 0.05)
-        #   FOR DEVELOPMENT IT IS RECOMMENDED TO FIST USE A NOISE FREE VERSION, i.e.  
-        #       ExecuteActionForRealisticAgentWithNoisyTransitionModel(idx_requested_action, 0.0)
-
-        # INSERT YOUR SOLUTION HERE (REWARDS MUST BE UPDATED IN THE solution_report)
-
         self.agent_host.setObservationsPolicy(MalmoPython.ObservationsPolicy.LATEST_OBSERVATION_ONLY)
         self.agent_host.setVideoPolicy(MalmoPython.VideoPolicy.LATEST_FRAME_ONLY)
         self.agent_host.setRewardsPolicy(MalmoPython.RewardsPolicy.KEEP_ALL_REWARDS)
+
         state_t = self.agent_host.getWorldState()
         reward_cumulative = 0.0
         initial_x, initial_z = self.get_agent_position(state_t)
         self.logger.debug('Initial position: %s, %s' % (initial_x, initial_z))
 
-        # if (self.state_space is not None):
-        for i in range(30):
+        if self.state_space is not None:
             self.run_agent_offline(initial_x, initial_z)
-
-        raw_input('Press enter to continue...')
-
-            # else:
-        #     pass
-            # self.run_agent_online()
+        else:
+            self.run_agent_online(state_t)
         return
 
     def get_agent_position(self, state_t):
@@ -381,7 +365,7 @@ class AgentRealistic:
         obs = json.loads(state_t.observations[-1].text)
         x = obs[u'XPos']
         z = obs[u'ZPos']
-        return x, z
+        return int(x), int(z)
 
     def run_agent_offline(self, initial_x, initial_z):
         self.logger.debug('Running agent offline...')
@@ -390,17 +374,9 @@ class AgentRealistic:
         state = (int(initial_x), int(initial_z))
         state_str = "S_%d_%d" % (int(initial_x), int(initial_z))
         goal_state = [self.state_space.goal_loc[0], self.state_space.goal_loc[1]]
+
+        iterations = self.get_iterations_by_mission_type()    #Simulate timeout
         reward = 0
-
-        # self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
-        # self.logger.debug('Updating Q table...')
-        # action = self.q_learning_agent((state_str, reward))
-        # self.logger.debug('%s' % action)
-        # state, state_str = self.update_state_offline(state, action)
-        # self.logger.debug('New agent state: %s, %s', state[0], state[1])
-        # self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
-
-        iterations = 400    #Simulate timeout
         i = 0
         while(i < iterations):
             # Simulate perception
@@ -425,25 +401,141 @@ class AgentRealistic:
                 percept['reward'] = reward
                 self.logger.debug('Got to goal! Reward: %s' % reward)
                 self.q_learning_agent.finished(reward)
-                self.q_learning_agent(percept)
+                self.q_learning_agent(percept, self.training)
                 self.q_learning_agent.reset()
-                self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
-                # raw_input('Press enter to continue...')
-
+                if self.q_learning_visualization != None:
+                    self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
                 break
 
-            print percept
             self.logger.debug('Updating Q table...')
-            a = self.q_learning_agent(percept)
-            self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
-            self.logger.debug('Taking action: %s' % a)
-            state, state_str = self.update_state_offline(state, a)
+            a = self.q_learning_agent(percept, self.training)
+            self.logger.debug('Utilities at state: (%s %s)' % (state[0], state[1]))
+            self.logger.debug(self.q_learning_agent.all_utilities(state_str))
+            if self.q_learning_visualization != None:
+                self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
+            self.logger.debug('Requested action: %s' % a)
+            idx_requested_action = self.get_action_index(a)
+            action = self.__ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, 0.05)
+            self.logger.debug('Taking action: %s' % action)
+            state, state_str = self.update_state_offline(state, action)
             reward = reward_sendcommand
             self.logger.debug('New agent state: %s, %s', state[0], state[1])
-            self.q_learning_visualization.drawQ()
+            if self.q_learning_visualization != None:
+                self.q_learning_visualization.drawQ()
             i += 1
 
-            # raw_input('Press enter to continue...')
+    def run_agent_online(self, state_t):
+        self.logger.debug('Running agent online...')
+        state_t = self.agent_host.getWorldState()
+        reward = 0
+
+        while state_t.is_mission_running:
+            # Wait 0.5 sec
+            time.sleep(0.2)
+            # Get the world state
+            state_t = self.agent_host.getWorldState()
+
+            reward = 0
+            for reward_t in state_t.rewards:
+                print "Reward_t:", reward_t.getValue()
+                reward += reward_t.getValue()
+                # reward_cumulative += reward_t.getValue()
+                self.solution_report.addReward(reward_t.getValue(), datetime.datetime.now())
+                print("Cummulative reward so far:", reward)
+
+                # Check if anything went wrong along the way
+            for error in state_t.errors:
+                print("Error:", error.text)
+
+
+            if state_t.number_of_observations_since_last_state > 0:  # Has any Oracle-like and/or internal sensor observations come in?
+                msg = state_t.observations[-1].text  # Get the detailed for the last observed state
+                oracle = json.loads(msg)  # Parse the Oracle JSON
+                grid = oracle.get(u'grid', 0)
+                state = self.get_agent_position(state_t)
+                state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
+                self.logger.debug('Current state: %s, %s' % (state[0], state[1]))
+                percept = {}
+                percept['state'] = state_str
+                if reward < (-30):
+                    print 'Timeout reward!'
+                    reward = 0  # eliminate timeout reward
+                percept['reward'] = reward
+                percept['state_actions'] = []
+
+                if grid[3] != 'stained_hardened_clay' and grid[3] != 'stone':
+                    percept['state_actions'].append("movewest 1")
+                if grid[5] != 'stained_hardened_clay' and grid[5] != 'stone':
+                    percept['state_actions'].append("moveeast 1")
+                if grid[1] != 'stained_hardened_clay' and grid[1] != 'stone':
+                    percept['state_actions'].append("movenorth 1")
+                if grid[7] != 'stained_hardened_clay' and grid[7] != 'stone':
+                    percept['state_actions'].append("movesouth 1")
+
+                self.logger.debug('Utilities at state: (%s %s)' % (state[0], state[1]))
+                self.logger.debug(list(self.q_learning_agent.all_utilities(state_str)))
+                self.logger.debug('Updating Q table...')
+                a = self.q_learning_agent(percept, self.training)
+                if self.q_learning_visualization != None:
+                    self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
+                self.logger.debug('Requested action: %s' % a)
+                idx_requested_action = self.get_action_index(a)
+                action = self.__ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, 0.05)
+                self.logger.debug('Taking action: %s' % action)
+
+            # -- Print some of the state information --#
+            print("Percept: video,observations,rewards received:", state_t.number_of_video_frames_since_last_state,
+                  state_t.number_of_observations_since_last_state, state_t.number_of_rewards_since_last_state)
+
+            if self.q_learning_visualization != None:
+                self.q_learning_visualization.drawQ()
+
+        time.sleep(0.5)
+
+        self.logger.debug('Mission finished!')
+
+        # Get the world state
+        state_t = self.agent_host.getWorldState()
+
+        reward = 0
+        for reward_t in state_t.rewards:
+            print "Reward_t:", reward_t.getValue()
+            reward += reward_t.getValue()
+            # reward_cumulative += reward_t.getValue()
+            self.solution_report.addReward(reward_t.getValue(), datetime.datetime.now())
+            print("Cummulative reward so far:", reward)
+
+            # Check if anything went wrong along the way
+        for error in state_t.errors:
+            print("Error:", error.text)
+
+        if state_t.number_of_observations_since_last_state > 0:  # Has any Oracle-like and/or internal sensor observations come in?
+            msg = state_t.observations[-1].text  # Get the detailed for the last observed state
+            oracle = json.loads(msg)  # Parse the Oracle JSON
+            grid = oracle.get(u'grid', 0)
+            print grid
+            percept = {}
+            percept['state'] = state_str
+            if reward < (-30):
+                print 'Timeout reward!'
+                reward = 0 # eliminate timeout reward
+            percept['reward'] = reward
+            percept['state_actions'] = []
+
+            if grid[3] != 'stained_hardened_clay' and grid[3] != 'stone':
+                percept['state_actions'].append("movewest 1")
+            if grid[5] != 'stained_hardened_clay' and grid[5] != 'stone':
+                percept['state_actions'].append("moveeast 1")
+            if grid[1] != 'stained_hardened_clay' and grid[1] != 'stone':
+                percept['state_actions'].append("movenorth 1")
+            if grid[7] != 'stained_hardened_clay' and grid[7] != 'stone':
+                percept['state_actions'].append("movesouth 1")
+
+            self.q_learning_agent.finished(reward)
+            self.q_learning_agent(percept,self.training)
+            self.q_learning_agent.reset()
+            if self.q_learning_visualization != None:
+                self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
 
     def update_state_offline(self, state, action):
         state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
@@ -454,6 +546,19 @@ class AgentRealistic:
             return state, state_str
         return new_state, new_state_str
 
+    def get_action_index(self, action):
+        for i in range(0, len(self.AGENT_ALLOWED_ACTIONS)):
+            if self.AGENT_ALLOWED_ACTIONS[i] == action:
+                return i
+
+    def get_iterations_by_mission_type(self):
+        if self.mission_type == 'small':
+            return 120
+        elif self.mission_type == 'medium':
+            return 400
+        elif self.mission_type == 'large':
+            return 1800
+
     def load_and_init_mission(self):
         # -- Load and init mission --#
         print('Generate and load the ' + self.mission_type + ' mission with seed ' + str(
@@ -463,6 +568,15 @@ class AgentRealistic:
         self.solution_report.setMissionXML(mission_xml)
         time.sleep(1)
         self.solution_report.start()
+
+    def init_logger(self):
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)
+        ch = logging.StreamHandler(sys.stdout)
+        ch.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        ch.setFormatter(formatter)
+        self.logger.addHandler(ch)
 
 
 #--------------------------------------------------------------------------------------
@@ -481,19 +595,23 @@ class AgentSimple:
         self.state_space = state_space; 
         self.solution_report = solution_report  # Python calls by reference !
         self.solution_report.setMissionType(self.mission_type)
-        self.solution_report.setMissionSeed(self.mission_seed)     
+        self.solution_report.setMissionSeed(self.mission_seed)
+        self.visualize = False
         self.init_logger()
 
     def run_agent(self):   
         """ Run the Simple agent and log the performance and resource use """                
         self.logger.debug('Running Simple agent...')
         self.load_and_init_mission()
-        maze_map = self.create_graph(True)
+        maze_map = self.create_graph()
         initial_state = 'S_' + str(state_space.start_loc[0]) + '_' + str(state_space.start_loc[1])
         goal_state = 'S_' + str(state_space.goal_loc[0]) + '_' + str(state_space.goal_loc[1])
-        solution = self.solve_graph_problem(maze_map, initial_state, goal_state, True)
+        solution = self.solve_graph_problem(maze_map, initial_state, goal_state)
         self.execute_solution_on_agent(solution)
         return
+
+    def set_visualize(self, visualize):
+        self.visualize = visualize
 
     def execute_solution_on_agent(self, solution_path_local):
         reward_cumulative = 0.0
@@ -511,6 +629,7 @@ class AgentSimple:
                 agent_command = self.get_command_from_coords(x_old, z_old, x_new, z_new)
                 if (agent_command != None):
                     self.agent_host.sendCommand(agent_command)
+                    self.solution_report.addAction()
                     x_old = x_new
                     z_old = z_new
             except RuntimeError as e:
@@ -582,7 +701,7 @@ class AgentSimple:
                 command = "movenorth 1"
         return  command
 
-    def solve_graph_problem(self, maze_map, initial_state, goal_state, visualize):
+    def solve_graph_problem(self, maze_map, initial_state, goal_state):
         maze_problem = GraphProblem(initial_state, goal_state, maze_map)
 
         self.logger.debug('Solving graph problem...')
@@ -607,7 +726,7 @@ class AgentSimple:
         self.logger.debug("Final solution path:")
 
         node_colors = self.final_path_colors(maze_problem, node.solution(), self.initial_node_colors)
-        if visualize:
+        if self.visualize:
             self.logger.debug("Visualizing graph solution...")
             self.show_map_graph(self.G, state_space.state_locations, node_colors, self.node_labels,
                                 self.node_label_pos, self.edge_labels)
@@ -690,7 +809,7 @@ class AgentSimple:
             all_node_colors.append(dict(node_colors))
         return None
 
-    def create_graph(self, visualize):
+    def create_graph(self):
         maze_map = UndirectedGraph(state_space.state_actions)
         self.G = nx.Graph()
         self.node_labels = dict()
@@ -714,7 +833,7 @@ class AgentSimple:
 
         self.logger.debug("Done creating the graph object")
 
-        if visualize:
+        if self.visualize:
             self.logger.debug("Showing graph visualization")
             self.show_map_graph(self.G, state_space.state_locations, node_colors, self.node_labels, self.node_label_pos, self.edge_labels)
 
@@ -781,8 +900,8 @@ class AgentRandom:
         self.agent_port = agent_port       
         self.mission_seed = mission_seed
         self.mission_type = mission_type        
-        self.state_space = state_space;
-        self.solution_report = solution_report;   # Python makes call by reference !     
+        self.state_space = state_space
+        self.solution_report = solution_report   # Python makes call by reference !
         self.solution_report.setMissionType(self.mission_type)
         self.solution_report.setMissionSeed(self.mission_seed) 
 
@@ -809,7 +928,8 @@ class AgentRandom:
         self.agent_host.setVideoPolicy(MalmoPython.VideoPolicy.LATEST_FRAME_ONLY)
         self.agent_host.setRewardsPolicy(MalmoPython.RewardsPolicy.KEEP_ALL_REWARDS)
         
-        # Fix the randomness of the agent by seeding the random number generator                
+        # Fix the randomness of the agent by seeding the random number generator
+        random.seed()
         reward_cumulative = 0.0
         
         # Main loop:
@@ -824,53 +944,19 @@ class AgentRandom:
                 
             if state_t.is_mission_running:                
                 actionIdx = random.randint(0, 3) 
-                print("Requested Action:",self.AGENT_ALLOWED_ACTIONS[actionIdx])
-                
-                # Now try to execute the action givne a noisy transition model
-                actual_action = self.__ExecuteActionForRandomAgentWithNoisyTransitionModel__(actionIdx, 0.05);
-                print("Actual Action:",actual_action)
-                                       
-            # Collect the number of rewards and add to reward_cumulative
-            # Note: Since we only observe the sensors and environment every a number of rewards may have accumulated in the buffer
-            for reward_t in state_t.rewards:              
+                print("Taking Action:",self.AGENT_ALLOWED_ACTIONS[actionIdx])
+                # Now try to execute the action
+                self.agent_host.sendCommand(self.AGENT_ALLOWED_ACTIONS[actionIdx])
+                self.solution_report.addAction()
+
+            for reward_t in state_t.rewards:
                 reward_cumulative += reward_t.getValue()
                 self.solution_report.addReward(reward_t.getValue(), datetime.datetime.now())
                 print("Reward_t:",reward_t.getValue())
                 print("Cummulative reward so far:",reward_cumulative)
 
-            # Check if anything went wrong along the way
             for error in state_t.errors:
                 print("Error:",error.text)
-
-            # Handle the sensor input     
-            xpos = None
-            ypos = None
-            zpos = None
-            yaw  = None
-            pitch = None
-            if state_t.number_of_observations_since_last_state > 0: # Has any Oracle-like and/or internal sensor observations come in?
-                msg = state_t.observations[-1].text      # Get the detailed for the last observed state
-                oracle = json.loads(msg)                 # Parse the Oracle JSON
-
-                # Orcale
-                grid = oracle.get(u'grid', 0)            # 
-        
-                # GPS-like sensor
-                xpos = oracle.get(u'XPos', 0)            # Position in 2D plane, 1st axis
-                zpos = oracle.get(u'ZPos', 0)            # Position in 2D plane, 2nd axis (yes Z!)
-                ypos = oracle.get(u'YPos', 0)            # Height as measured from surface! (yes Y!)
-                
-                # Standard "internal" sensory inputs
-                yaw  = oracle.get(u'Yaw', 0)             # Yaw
-                pitch = oracle.get(u'Pitch', 0)          # Pitch        
-       
-            # Vision
-            if state_t.number_of_video_frames_since_last_state > 0: # Have any Vision percepts been registred ?
-                frame = state_t.video_frames[0]
-        
-            #-- Print some of the state information --#
-            print("Percept: video,observations,rewards received:",state_t.number_of_video_frames_since_last_state,state_t.number_of_observations_since_last_state,state_t.number_of_rewards_since_last_state)        
-            print("\tcoordinates (x,y,z,yaw,pitch):" + str(xpos) + " " + str(ypos) + " " + str(zpos)+ " " + str(yaw) + " " + str(pitch))
 
         # --------------------------------------------------------------------------------------------   
         # Summary
@@ -939,8 +1025,8 @@ class AgentHelper:
                 ypos = oracle_and_internal.get(u'YPos', 0)          
                 yaw  = oracle_and_internal.get(u'Yaw', 0)            
                 pitch = oracle_and_internal.get(u'Pitch', 0)    
-               
-                #-- Parste the JOSN string, Note there are better ways of doing this! --#               
+
+                #-- Parste the JOSN string, Note there are better ways of doing this! --#
                 full_state_map_raw = str(grid)   
                 full_state_map_raw=full_state_map_raw.replace("[","")
                 full_state_map_raw=full_state_map_raw.replace("]","")
@@ -987,13 +1073,15 @@ class AgentHelper:
                                 loc_start = state_space_locations[state_id]
                             elif X[i_z,j_x] == state_goal:
                                 state_goal_id = state_id  
-                                loc_goal = state_space_locations[state_id]               
-                                                                                                                              
-                #-- Generate state / action list --#
+                                loc_goal = state_space_locations[state_id]
+
+
+                                #-- Generate state / action list --#
                 # First define the set of actions in the defined coordinate system             
                 actions = {"west": [-1,0],"east": [+1,0],"north": [0,-1], "south": [0,+1]}
                 state_space_actions = {}
-                for state_id in state_space_locations:                                       
+                intermediate_rewards_states = {}
+                for state_id in state_space_locations:
                     possible_states = {}
                     for action in actions:
                         #-- Check if a specific action is possible --#
@@ -1002,15 +1090,26 @@ class AgentHelper:
                         state_loc_post_action = [state_loc[0]+delta[0],state_loc[1]+delta[1]]
 
                         #-- Check if the new possible state is in the state_space, i.e., is accessible --#
-                        state_id_post_action = "S_"+str(state_loc_post_action[0])+"_"+str(state_loc_post_action[1])                        
+                        state_id_post_action = "S_"+str(state_loc_post_action[0])+"_"+str(state_loc_post_action[1])
+
                         if state_space_locations.get(state_id_post_action) != None:
                             possible_states[state_id_post_action] = 1 
                         
                     #-- Add the possible actions for this state to the global dict --#                              
                     state_space_actions[state_id] = possible_states
+
+                    #-- Explore intermediate rewards
+                    if state_loc[0] != 7 and state_loc[1] != 5:
+                        self.agent_host.sendCommand("tp " + str(state_loc[0]) + ".5" + " 217.0 " + str(state_loc[1]) + ".5")
+                        time.sleep(0.3)
+                        state_t = self.agent_host.getWorldState()
+                        for reward_t in state_t.rewards:
+                            if reward_t.getValue() > 0:
+                                intermediate_rewards_states['S_' + str(state_loc[0]) + '_' + str(state_loc[1])] = reward_t.getValue()
+
                 
                 #-- Kill the agent/mission --#                                                  
-                agent_host.sendCommand("tp " + str(0 ) + " " + str(0) + " " + str(0))            
+                agent_host.sendCommand("tp " + str(0 ) + " " + str(0) + " " + str(0))
                 time.sleep(2)
 
                 #-- Save the info an instance of the StateSpace class --
@@ -1020,6 +1119,7 @@ class AgentHelper:
                 self.state_space.start_loc = loc_start
                 self.state_space.goal_id  = state_goal_id 
                 self.state_space.goal_loc = loc_goal
+                self.state_space.intermediate_reward_states = intermediate_rewards_states
                 
             #-- Reward location and values --#
             # OPTIONAL: If you want to account for the intermediate rewards 
@@ -1058,14 +1158,16 @@ if __name__ == "__main__":
 
     #-- Define default arguments, in case you run the module as a script --#
     DEFAULT_STUDENT_GUID = '2140845P'
-    DEFAULT_AGENT_NAME   = 'Realistic'
+    DEFAULT_AGENT_NAME   = 'Random'
     DEFAULT_MALMO_PATH   = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/Malmo-0.30.0-Mac-64bit_withBoost/' # HINT: Change this to your own path
     DEFAULT_AIMA_PATH    = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/aima-python/'  # HINT: Change this to your own path, forward slash only, should be the 2.7 version from https://www.dropbox.com/s/vulnv2pkbv8q92u/aima-python_python_v27_r001.zip?dl=0) or for Python 3.x get it from https://github.com/aimacode/aima-python
-    DEFAULT_MISSION_TYPE = 'medium'  #HINT: Choose between {small,medium,large}
-    DEFAULT_MISSION_SEED_MAX = 1    #HINT: How many different instances of the given mission (i.e. maze layout)    
+    DEFAULT_MISSION_TYPE = 'small'  #HINT: Choose between {small,medium,large}
+    DEFAULT_MISSION_SEED_MAX = 3    #HINT: How many different instances of the given mission (i.e. maze layout)
     DEFAULT_REPEATS      = 1        #HINT: How many repetitions of the same maze layout
     DEFAULT_PORT         = 0
     DEFAULT_SAVE_PATH    = './results/'
+    DEFAULT_RUN_OFFLINE = False
+    DEFAULT_VISUALIZE_PROCESS = False
 
     #-- Import required modules --#
     import os
@@ -1101,7 +1203,9 @@ if __name__ == "__main__":
     parser.add_argument("-x" , "--malmoport"        , type=int, help="special port for the Minecraft client", default=DEFAULT_PORT)
     parser.add_argument("-o" , "--aimapath"         , type=str, help="path for the aima toolbox (optional)"   , default=DEFAULT_AIMA_PATH)
     parser.add_argument("-r" , "--resultpath"       , type=str, help="the path where the results are saved" , default=DEFAULT_SAVE_PATH)
-    args = parser.parse_args()        
+    parser.add_argument("-f" , "--offline"       , type=bool, help="if this is set to true the realistic agent runs offline." , default=DEFAULT_RUN_OFFLINE)
+    parser.add_argument("-v" , "--visualize"       , type=bool, help="if this is set to true the solutions for realistic and simple agents are visualized." , default=DEFAULT_VISUALIZE_PROCESS)
+    args = parser.parse_args()
     print args     
 
     #-- Display infor about the system --#     
@@ -1119,7 +1223,7 @@ if __name__ == "__main__":
     print('Import the Malmo module...')
     import MalmoPython
 
-    # -- OPTIONAL: Import the AIMA tools (for representing the state-space)--#
+    #-- Import the AIMA tools (for representing the state-space)--#
     print('Add AIMA lib to the Python environment ['+args.aimapath+']')
     sys.path.append(args.aimapath+'/')
     from search import *
@@ -1139,7 +1243,7 @@ if __name__ == "__main__":
     for i_training_seed in range(0,args.missionseedmax):
         
         #-- Observe the full state space a prior i (only allowed for the simple agent!) ? --#
-        if args.agentname.lower()=='simple' or args.agentname.lower()=='realistic':
+        if args.agentname.lower()=='simple' or args.offline:
             print('Get state-space representation using a AgentHelper...[note in v0.30 there is now an faster way of getting the state-space ]')            
             helper_solution_report = SolutionReport()
             helper_agent = AgentHelper(agent_host,args.malmoport,args.missiontype,i_training_seed, helper_solution_report, None)
@@ -1148,6 +1252,7 @@ if __name__ == "__main__":
             helper_agent = None            
         
         #-- Repeat the same instance (size and seed) multiple times --#
+        agent_to_be_evaluated = None
         for i_rep in range(0,args.nrepeats):                                   
             print('Setup the performance log...')
             solution_report = SolutionReport()
@@ -1158,9 +1263,13 @@ if __name__ == "__main__":
             state_space = None;
             if not helper_agent==None:
                 state_space = deepcopy(helper_agent.state_space)                            
-            
-            agent_to_be_evaluated = eval(agent_name+'(agent_host,args.malmoport,args.missiontype,i_training_seed,solution_report,state_space)') 
-    
+
+            if agent_to_be_evaluated == None:   #keep states between iterations
+                agent_to_be_evaluated = eval(agent_name+'(agent_host,args.malmoport,args.missiontype,i_training_seed,solution_report,state_space)')
+
+            if args.agentname.lower()=='simple' or args.agentname.lower()=='realistic':
+                agent_to_be_evaluated.set_visualize(args.visualize)
+
             print('Run the agent, time it and log the performance...')
             solution_report.start() # start the timer (may be overwritten in the agent to provide a fair comparison)            
             agent_to_be_evaluated.run_agent()                  
@@ -1181,6 +1290,7 @@ if __name__ == "__main__":
             pickle.dump(agent_to_be_evaluated.solution_report,foutput) # Save the solution information in a specific file, HiNT:  It can be loaded with pickle.load(output) with read permissions to the file
             foutput.close()
 
+
             # You can reload the results for this instance using...
             #finput = open(fn_result+'.pkl', 'rb')
             #res =  pickle.load(finput)
@@ -1189,5 +1299,8 @@ if __name__ == "__main__":
             print('Sleep a sec to make sure the client is ready for next mission/agent variation...')            
             time.sleep(1)
             print("------------------------------------------------------------------------------\n")
+
+        # raw_input('Press enter to continue...')
+
 
     print("Done")

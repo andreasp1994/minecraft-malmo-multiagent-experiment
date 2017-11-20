@@ -4,3 +4,4 @@ tmp.tgz
 results/
 .idea/
 .DS_STORE
+*.pyc
