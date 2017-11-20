@@ -58,8 +58,6 @@ class QLearningAgent(object):
             Nsa[s, a] += 1
             Q[s, a] += alpha(self.g(Nsa[s, a])) * (r + gamma * max(Q[s1, a1] for a1 in actions_in_state(s1))
                                              - Q[s, a])
-            print Q[s, a]
-
 
         self.s, self.r = s1, r1
         self.a = max(self.shuffled(actions_in_state(s1)), key=lambda a1: self.f(Q[s1, a1], Nsa[s1, a1]))

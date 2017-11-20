@@ -313,7 +313,7 @@ class AgentRealistic:
         self.init_logger()
         self.visualize = False
 
-        self.gamma = 0.5
+        self.gamma = 1
         self.state_space = state_space_graph
         self.q_learning_agent = QLearningAgent(self.AGENT_ALLOWED_ACTIONS, self.gamma, 3, 1500)
         self.q_learning_visualization = None
@@ -340,20 +340,22 @@ class AgentRealistic:
 
     def run_agent(self):           
         """ Run the Realistic agent and log the performance and resource use """
-        self.load_and_init_mission()
 
         self.agent_host.setObservationsPolicy(MalmoPython.ObservationsPolicy.LATEST_OBSERVATION_ONLY)
         self.agent_host.setVideoPolicy(MalmoPython.VideoPolicy.LATEST_FRAME_ONLY)
         self.agent_host.setRewardsPolicy(MalmoPython.RewardsPolicy.KEEP_ALL_REWARDS)
 
-        state_t = self.agent_host.getWorldState()
+        # state_t = self.agent_host.getWorldState()
         reward_cumulative = 0.0
-        initial_x, initial_z = self.get_agent_position(state_t)
-        self.logger.debug('Initial position: %s, %s' % (initial_x, initial_z))
+        # initial_x, initial_z = self.get_agent_position(state_t)
+        # self.logger.debug('Initial position: %s, %s' % (initial_x, initial_z))
 
         if self.state_space is not None:
+            initial_x, initial_z = self.state_space.start_loc[0], self.state_space.start_loc[1]
             self.run_agent_offline(initial_x, initial_z)
         else:
+            self.load_and_init_mission()
+            state_t = self.agent_host.getWorldState()
             self.run_agent_online(state_t)
         return
 
@@ -1158,12 +1160,12 @@ if __name__ == "__main__":
 
     #-- Define default arguments, in case you run the module as a script --#
     DEFAULT_STUDENT_GUID = '2140845P'
-    DEFAULT_AGENT_NAME   = 'Simple'
+    DEFAULT_AGENT_NAME   = 'Realistic'
     DEFAULT_MALMO_PATH   = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/Malmo-0.30.0-Mac-64bit_withBoost/' # HINT: Change this to your own path
     DEFAULT_AIMA_PATH    = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/aima-python/'  # HINT: Change this to your own path, forward slash only, should be the 2.7 version from https://www.dropbox.com/s/vulnv2pkbv8q92u/aima-python_python_v27_r001.zip?dl=0) or for Python 3.x get it from https://github.com/aimacode/aima-python
     DEFAULT_MISSION_TYPE = 'small'  #HINT: Choose between {small,medium,large}
-    DEFAULT_MISSION_SEED_MAX = 3    #HINT: How many different instances of the given mission (i.e. maze layout)
-    DEFAULT_REPEATS      = 1        #HINT: How many repetitions of the same maze layout
+    DEFAULT_MISSION_SEED_MAX = 1    #HINT: How many different instances of the given mission (i.e. maze layout)
+    DEFAULT_REPEATS      = 10        #HINT: How many repetitions of the same maze layout
     DEFAULT_PORT         = 0
     DEFAULT_SAVE_PATH    = './results/'
     DEFAULT_RUN_OFFLINE = False
@@ -1217,7 +1219,7 @@ if __name__ == "__main__":
     print("MALMO_XSD_PATH:'"+os.environ["MALMO_XSD_PATH"]+"'")
         
     #-- Add the Malmo path  --#
-    print('Add Malmo Python API/lib to the Python environment ['+args.malmopath+'/Python_Examples'+']')    
+    print('Add Malmo Python API/lib to the Python environment ['+args.malmopath+'Python_Examples'+']')
     sys.path.append(args.malmopath+'Python_Examples/') 
     
     #-- Import the Malmo Python wrapper/module --#
@@ -1241,48 +1243,47 @@ if __name__ == "__main__":
     agent_host = MalmoPython.AgentHost()
 
     # You can reload the results for this instance using...
-    rewards_small = []
-    actions_per_iter_small = []
-    seed = [0, 1, 2]
-    for i in range(0,3):
-        fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentRandom_' +args.missiontype + '_' + str(i) + '_' + str(0)
-        finput = open(fn_result+'.pkl', 'rb')
-        res =  pickle.load(finput)
-        rewards_small.append(res.reward_cumulative)
-        actions_per_iter_small.append(res.action_count)
-        finput.close()
-
-    rewards_medium = []
-    actions_per_iter_medium = []
-    for i in range(0,3):
-        fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentRandom_medium' + '_' + str(i) + '_' + str(0)
-        finput = open(fn_result+'.pkl', 'rb')
-        res =  pickle.load(finput)
-        rewards_medium.append(res.reward_cumulative)
-        actions_per_iter_medium.append(res.action_count)
-        finput.close()
-
-    rewards_medium = []
-    actions_per_iter_medium = []
-    for i in range(0, 3):
-        fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentRandom_medium' + '_' + str(i) + '_' + str(
-            0)
-        finput = open(fn_result + '.pkl', 'rb')
-        res = pickle.load(finput)
-        rewards_medium.append(res.reward_cumulative)
-        actions_per_iter_medium.append(res.action_count)
-        finput.close()
-
-    plt.figure()
-    plt.plot(seed, rewards_small, linestyle=':')
-    plt.plot(seed, actions_per_iter_small)
-    plt.plot(seed, rewards_medium, linestyle=':')
-    plt.plot(seed, actions_per_iter_medium)
-    plt.show()
+    # rewards_small = []
+    # actions_per_iter_small = []
+    # seed = [0, 1, 2]
+    # for i in range(0,3):
+    #     fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentRandom_small' + '_' + str(i) + '_' + str(0)
+    #     finput = open(fn_result+'.pkl', 'rb')
+    #     res =  pickle.load(finput)
+    #     rewards_small.append(res.reward_cumulative)
+    #     actions_per_iter_small.append(res.action_count)
+    #     finput.close()
+    #
+    # rewards_medium = []
+    # actions_per_iter_medium = []
+    # for i in range(0,3):
+    #     fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentRandom_medium' + '_' + str(i) + '_' + str(0)
+    #     finput = open(fn_result+'.pkl', 'rb')
+    #     res =  pickle.load(finput)
+    #     rewards_medium.append(res.reward_cumulative)
+    #     actions_per_iter_medium.append(res.action_count)
+    #     finput.close()
+    #
+    # rewards_small_simple = []
+    # actions_per_iter_small_simple = []
+    # for i in range(0, 3):
+    #     fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentSimple_small' + '_' + str(i) + '_' + str(
+    #         0)
+    #     finput = open(fn_result + '.pkl', 'rb')
+    #     res = pickle.load(finput)
+    #     rewards_small_simple.append(res.reward_cumulative)
+    #     actions_per_iter_small_simple.append(res.action_count)
+    #     finput.close()
+    #
+    # plt.figure()
+    # plt.plot(seed, rewards_small, linestyle=':')
+    # # plt.plot(seed, actions_per_iter_small)
+    # plt.plot(seed, rewards_small_simple)
+    # # plt.plot(seed, actions_per_iter_medium)
+    # plt.show()
 
     #-- Itereate a few different layout of the same mission stype --#
     for i_training_seed in range(0,args.missionseedmax):
-        
         #-- Observe the full state space a prior i (only allowed for the simple agent!) ? --#
         if args.agentname.lower()=='simple' or args.offline:
             print('Get state-space representation using a AgentHelper...[note in v0.30 there is now an faster way of getting the state-space ]')            
@@ -1294,14 +1295,15 @@ if __name__ == "__main__":
         
         #-- Repeat the same instance (size and seed) multiple times --#
         agent_to_be_evaluated = None
-        for i_rep in range(0,args.nrepeats):                                   
+        for i_rep in range(0,args.nrepeats):
+
             print('Setup the performance log...')
             solution_report = SolutionReport()
             solution_report.setStudentGuid(args.studentguid)
             
             print('Get an instance of the specific ' + args.agentname + ' agent with the agent_host and load the ' + args.missiontype + ' mission with seed ' + str(i_training_seed))
             agent_name = 'Agent' + args.agentname        
-            state_space = None;
+            state_space = None
             if not helper_agent==None:
                 state_space = deepcopy(helper_agent.state_space)                            
 
@@ -1309,7 +1311,8 @@ if __name__ == "__main__":
                 agent_to_be_evaluated = eval(agent_name+'(agent_host,args.malmoport,args.missiontype,i_training_seed,solution_report,state_space)')
 
             if args.agentname.lower()=='simple' or args.agentname.lower()=='realistic':
-                agent_to_be_evaluated.set_visualize(args.visualize)
+                if agent_to_be_evaluated.visualize != args.visualize:
+                    agent_to_be_evaluated.set_visualize(args.visualize)
 
             print('Run the agent, time it and log the performance...')
             solution_report.start() # start the timer (may be overwritten in the agent to provide a fair comparison)            
@@ -1343,7 +1346,7 @@ if __name__ == "__main__":
             time.sleep(1)
             print("------------------------------------------------------------------------------\n")
 
-        # raw_input('Press enter to continue...')
+        raw_input('Press enter to continue...')
 
 
     print("Done")
