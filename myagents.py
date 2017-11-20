@@ -1158,7 +1158,7 @@ if __name__ == "__main__":
 
     #-- Define default arguments, in case you run the module as a script --#
     DEFAULT_STUDENT_GUID = '2140845P'
-    DEFAULT_AGENT_NAME   = 'Random'
+    DEFAULT_AGENT_NAME   = 'Simple'
     DEFAULT_MALMO_PATH   = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/Malmo-0.30.0-Mac-64bit_withBoost/' # HINT: Change this to your own path
     DEFAULT_AIMA_PATH    = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/aima-python/'  # HINT: Change this to your own path, forward slash only, should be the 2.7 version from https://www.dropbox.com/s/vulnv2pkbv8q92u/aima-python_python_v27_r001.zip?dl=0) or for Python 3.x get it from https://github.com/aimacode/aima-python
     DEFAULT_MISSION_TYPE = 'small'  #HINT: Choose between {small,medium,large}
@@ -1189,6 +1189,7 @@ if __name__ == "__main__":
     import matplotlib.image as mpimg
     import networkx as nx    
     from matplotlib import lines
+    import matplotlib.pyplot as plt
     from QLearningVisualization import QLearningVisualization
     from QLearningAgent import QLearningAgent
 
@@ -1238,6 +1239,46 @@ if __name__ == "__main__":
     
     print('Instantiate an agent interface/api to Malmo')
     agent_host = MalmoPython.AgentHost()
+
+    # You can reload the results for this instance using...
+    rewards_small = []
+    actions_per_iter_small = []
+    seed = [0, 1, 2]
+    for i in range(0,3):
+        fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentRandom_' +args.missiontype + '_' + str(i) + '_' + str(0)
+        finput = open(fn_result+'.pkl', 'rb')
+        res =  pickle.load(finput)
+        rewards_small.append(res.reward_cumulative)
+        actions_per_iter_small.append(res.action_count)
+        finput.close()
+
+    rewards_medium = []
+    actions_per_iter_medium = []
+    for i in range(0,3):
+        fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentRandom_medium' + '_' + str(i) + '_' + str(0)
+        finput = open(fn_result+'.pkl', 'rb')
+        res =  pickle.load(finput)
+        rewards_medium.append(res.reward_cumulative)
+        actions_per_iter_medium.append(res.action_count)
+        finput.close()
+
+    rewards_medium = []
+    actions_per_iter_medium = []
+    for i in range(0, 3):
+        fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentRandom_medium' + '_' + str(i) + '_' + str(
+            0)
+        finput = open(fn_result + '.pkl', 'rb')
+        res = pickle.load(finput)
+        rewards_medium.append(res.reward_cumulative)
+        actions_per_iter_medium.append(res.action_count)
+        finput.close()
+
+    plt.figure()
+    plt.plot(seed, rewards_small, linestyle=':')
+    plt.plot(seed, actions_per_iter_small)
+    plt.plot(seed, rewards_medium, linestyle=':')
+    plt.plot(seed, actions_per_iter_medium)
+    plt.show()
 
     #-- Itereate a few different layout of the same mission stype --#
     for i_training_seed in range(0,args.missionseedmax):
@@ -1291,10 +1332,12 @@ if __name__ == "__main__":
             foutput.close()
 
 
-            # You can reload the results for this instance using...
-            #finput = open(fn_result+'.pkl', 'rb')
-            #res =  pickle.load(finput)
-            #finput.close()
+            # # You can reload the results for this instance using...
+            # for i in range(0,3):
+            #     fn_result = args.resultpath + 'solution_' + args.studentguid + '_' + agent_name + '_' +args.missiontype + '_' + str(i) + '_' + str(i_rep)
+            #     finput = open(fn_result+'.pkl', 'rb')
+            #     res =  pickle.load(finput)
+            #     finput.close()
             
             print('Sleep a sec to make sure the client is ready for next mission/agent variation...')            
             time.sleep(1)
