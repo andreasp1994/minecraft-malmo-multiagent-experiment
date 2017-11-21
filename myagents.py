@@ -304,8 +304,7 @@ class AgentRealistic:
         self.agent_port = agent_port
         self.mission_seed = mission_seed
         self.mission_type = mission_type        
-        self.state_space = None; # NOTE: The Realistic can not know anything about the state_space a prior i !
-        self.solution_report = solution_report;   # Python is call by reference !     
+        self.solution_report = solution_report;   # Python is call by reference !
         self.solution_report.setMissionType(self.mission_type)
         self.solution_report.setMissionSeed(self.mission_seed)
 
@@ -313,9 +312,9 @@ class AgentRealistic:
         self.init_logger()
         self.visualize = False
 
-        self.gamma = 1
-        self.state_space = state_space_graph
-        self.q_learning_agent = QLearningAgent(self.AGENT_ALLOWED_ACTIONS, self.gamma, 3, 1500)
+        self.gamma = 0.9
+        self.state_space = state_space_graph    # used for running offline
+        self.q_learning_agent = QLearningAgent(self.AGENT_ALLOWED_ACTIONS, self.gamma, 2, 1500, 9)
         self.q_learning_visualization = None
 
     def __ExecuteActionForRealisticAgentWithNoisyTransitionModel__(self, idx_requested_action, noise_level):
@@ -402,6 +401,7 @@ class AgentRealistic:
                 reward += reward_goal
                 percept['reward'] = reward
                 self.logger.debug('Got to goal! Reward: %s' % reward)
+                self.solution_report.addReward(reward, datetime.datetime.now())
                 self.q_learning_agent.finished(reward)
                 self.q_learning_agent(percept, self.training)
                 self.q_learning_agent.reset()
@@ -409,31 +409,32 @@ class AgentRealistic:
                     self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
                 break
 
+            self.solution_report.addReward(reward, datetime.datetime.now())
             self.logger.debug('Updating Q table...')
             a = self.q_learning_agent(percept, self.training)
             self.logger.debug('Utilities at state: (%s %s)' % (state[0], state[1]))
             self.logger.debug(self.q_learning_agent.all_utilities(state_str))
-            if self.q_learning_visualization != None:
-                self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
+            # if self.q_learning_visualization != None:
+            #     self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
             self.logger.debug('Requested action: %s' % a)
             idx_requested_action = self.get_action_index(a)
             action = self.__ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, 0.05)
             self.logger.debug('Taking action: %s' % action)
             state, state_str = self.update_state_offline(state, action)
+            self.solution_report.addAction()
             reward = reward_sendcommand
             self.logger.debug('New agent state: %s, %s', state[0], state[1])
-            if self.q_learning_visualization != None:
-                self.q_learning_visualization.drawQ()
+            # if self.q_learning_visualization != None:
+            #     self.q_learning_visualization.drawQ()
             i += 1
 
     def run_agent_online(self, state_t):
         self.logger.debug('Running agent online...')
         state_t = self.agent_host.getWorldState()
-        reward = 0
 
         while state_t.is_mission_running:
             # Wait 0.5 sec
-            time.sleep(0.2)
+            time.sleep(0.3)
             # Get the world state
             state_t = self.agent_host.getWorldState()
 
@@ -441,9 +442,7 @@ class AgentRealistic:
             for reward_t in state_t.rewards:
                 print "Reward_t:", reward_t.getValue()
                 reward += reward_t.getValue()
-                # reward_cumulative += reward_t.getValue()
                 self.solution_report.addReward(reward_t.getValue(), datetime.datetime.now())
-                print("Cummulative reward so far:", reward)
 
                 # Check if anything went wrong along the way
             for error in state_t.errors:
@@ -484,6 +483,7 @@ class AgentRealistic:
                 idx_requested_action = self.get_action_index(a)
                 action = self.__ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, 0.05)
                 self.logger.debug('Taking action: %s' % action)
+                self.solution_report.addAction()
 
             # -- Print some of the state information --#
             print("Percept: video,observations,rewards received:", state_t.number_of_video_frames_since_last_state,
@@ -574,11 +574,12 @@ class AgentRealistic:
     def init_logger(self):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
-        ch = logging.StreamHandler(sys.stdout)
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        self.logger.addHandler(ch)
+        if not len(self.logger.handlers):
+            ch = logging.StreamHandler(sys.stdout)
+            ch.setLevel(logging.DEBUG)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            ch.setFormatter(formatter)
+            self.logger.addHandler(ch)
 
 
 #--------------------------------------------------------------------------------------
@@ -1101,14 +1102,16 @@ class AgentHelper:
                     state_space_actions[state_id] = possible_states
 
                     #-- Explore intermediate rewards
-                    if state_loc[0] != 7 and state_loc[1] != 5:
-                        self.agent_host.sendCommand("tp " + str(state_loc[0]) + ".5" + " 217.0 " + str(state_loc[1]) + ".5")
-                        time.sleep(0.3)
-                        state_t = self.agent_host.getWorldState()
-                        for reward_t in state_t.rewards:
-                            if reward_t.getValue() > 0:
-                                intermediate_rewards_states['S_' + str(state_loc[0]) + '_' + str(state_loc[1])] = reward_t.getValue()
-
+                    try:
+                        if state_loc[0] != 7 and state_loc[1] != 5:
+                            self.agent_host.sendCommand("tp " + str(state_loc[0]) + ".5" + " 217.0 " + str(state_loc[1]) + ".5")
+                            time.sleep(0.3)
+                            state_t = self.agent_host.getWorldState()
+                            for reward_t in state_t.rewards:
+                                if reward_t.getValue() > 0:
+                                    intermediate_rewards_states['S_' + str(state_loc[0]) + '_' + str(state_loc[1])] = reward_t.getValue()
+                    except e:
+                        print e
                 
                 #-- Kill the agent/mission --#                                                  
                 agent_host.sendCommand("tp " + str(0 ) + " " + str(0) + " " + str(0))
@@ -1163,9 +1166,9 @@ if __name__ == "__main__":
     DEFAULT_AGENT_NAME   = 'Realistic'
     DEFAULT_MALMO_PATH   = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/Malmo-0.30.0-Mac-64bit_withBoost/' # HINT: Change this to your own path
     DEFAULT_AIMA_PATH    = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/aima-python/'  # HINT: Change this to your own path, forward slash only, should be the 2.7 version from https://www.dropbox.com/s/vulnv2pkbv8q92u/aima-python_python_v27_r001.zip?dl=0) or for Python 3.x get it from https://github.com/aimacode/aima-python
-    DEFAULT_MISSION_TYPE = 'small'  #HINT: Choose between {small,medium,large}
+    DEFAULT_MISSION_TYPE = 'medium'  #HINT: Choose between {small,medium,large}
     DEFAULT_MISSION_SEED_MAX = 1    #HINT: How many different instances of the given mission (i.e. maze layout)
-    DEFAULT_REPEATS      = 10        #HINT: How many repetitions of the same maze layout
+    DEFAULT_REPEATS      = 1        #HINT: How many repetitions of the same maze layout
     DEFAULT_PORT         = 0
     DEFAULT_SAVE_PATH    = './results/'
     DEFAULT_RUN_OFFLINE = False
@@ -1194,6 +1197,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from QLearningVisualization import QLearningVisualization
     from QLearningAgent import QLearningAgent
+    from Evaluator import Evaluator
 
     #-- Define the commandline arguments required to run the agents from command line --#
     parser = argparse.ArgumentParser()
@@ -1233,54 +1237,19 @@ if __name__ == "__main__":
     
     #-- Create the command line string for convenience --#
     cmd = 'python myagents.py -a ' + args.agentname + ' -s ' + str(args.missionseedmax) + ' -n ' + str(args.nrepeats) + ' -t ' + args.missiontype + ' -g ' + args.studentguid + ' -p ' + args.malmopath + ' -x ' + str(args.malmoport)
-    print(cmd)    
-       
-    #-- Run the agent a number of times (it only makes a difference if you agent has some random elemnt to it, initalizaiton, behavior, etc.) --#
-    #-- HINT: It is quite important that you understand the need for the loops  --#    
-    #-- HINT: Depending on how you implement your realistic agent in terms of restarts and repeats, you may want to change the way the loops operate --#
-    
+    print(cmd)
+
+    # # Plot comparison
+    # fn_eval = args.resultpath + 'eval'
+    # finput = open(fn_eval + '.pkl', 'rb')
+    # evaluator = pickle.load(finput)
+    # time.sleep(3)
+    # finput.close()
+    # # print evaluator.__dict__
+    # evaluator.plot_comparison(range(0,200), evaluator.eval_data['Nf'])
+
     print('Instantiate an agent interface/api to Malmo')
     agent_host = MalmoPython.AgentHost()
-
-    # You can reload the results for this instance using...
-    # rewards_small = []
-    # actions_per_iter_small = []
-    # seed = [0, 1, 2]
-    # for i in range(0,3):
-    #     fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentRandom_small' + '_' + str(i) + '_' + str(0)
-    #     finput = open(fn_result+'.pkl', 'rb')
-    #     res =  pickle.load(finput)
-    #     rewards_small.append(res.reward_cumulative)
-    #     actions_per_iter_small.append(res.action_count)
-    #     finput.close()
-    #
-    # rewards_medium = []
-    # actions_per_iter_medium = []
-    # for i in range(0,3):
-    #     fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentRandom_medium' + '_' + str(i) + '_' + str(0)
-    #     finput = open(fn_result+'.pkl', 'rb')
-    #     res =  pickle.load(finput)
-    #     rewards_medium.append(res.reward_cumulative)
-    #     actions_per_iter_medium.append(res.action_count)
-    #     finput.close()
-    #
-    # rewards_small_simple = []
-    # actions_per_iter_small_simple = []
-    # for i in range(0, 3):
-    #     fn_result = args.resultpath + 'solution_' + args.studentguid + '_AgentSimple_small' + '_' + str(i) + '_' + str(
-    #         0)
-    #     finput = open(fn_result + '.pkl', 'rb')
-    #     res = pickle.load(finput)
-    #     rewards_small_simple.append(res.reward_cumulative)
-    #     actions_per_iter_small_simple.append(res.action_count)
-    #     finput.close()
-    #
-    # plt.figure()
-    # plt.plot(seed, rewards_small, linestyle=':')
-    # # plt.plot(seed, actions_per_iter_small)
-    # plt.plot(seed, rewards_small_simple)
-    # # plt.plot(seed, actions_per_iter_medium)
-    # plt.show()
 
     #-- Itereate a few different layout of the same mission stype --#
     for i_training_seed in range(0,args.missionseedmax):
@@ -1295,7 +1264,10 @@ if __name__ == "__main__":
         
         #-- Repeat the same instance (size and seed) multiple times --#
         agent_to_be_evaluated = None
-        for i_rep in range(0,args.nrepeats):
+        actions_per_iteration = []
+        reward_per_iteration = []
+        iterations = range(0,args.nrepeats)
+        for i_rep in iterations:
 
             print('Setup the performance log...')
             solution_report = SolutionReport()
@@ -1309,6 +1281,8 @@ if __name__ == "__main__":
 
             if agent_to_be_evaluated == None:   #keep states between iterations
                 agent_to_be_evaluated = eval(agent_name+'(agent_host,args.malmoport,args.missiontype,i_training_seed,solution_report,state_space)')
+            else:
+                agent_to_be_evaluated.solution_report = solution_report
 
             if args.agentname.lower()=='simple' or args.agentname.lower()=='realistic':
                 if agent_to_be_evaluated.visualize != args.visualize:
@@ -1328,12 +1302,15 @@ if __name__ == "__main__":
             print("|\tTimeout = " + str(solution_report.is_timeout))    
             print("---------------------------------------------\n")
 
+            # Save performance measures to use in evaluator
+            actions_per_iteration.append(solution_report.action_count)
+            reward_per_iteration.append(solution_report.reward_cumulative)
+
             print('Save the solution report to a specific file for later analysis and reporting...')
             fn_result = args.resultpath + 'solution_' + args.studentguid + '_' + agent_name + '_' +args.missiontype + '_' + str(i_training_seed) + '_' + str(i_rep) 
             foutput = open(fn_result+'.pkl', 'wb')
             pickle.dump(agent_to_be_evaluated.solution_report,foutput) # Save the solution information in a specific file, HiNT:  It can be loaded with pickle.load(output) with read permissions to the file
             foutput.close()
-
 
             # # You can reload the results for this instance using...
             # for i in range(0,3):
@@ -1346,6 +1323,27 @@ if __name__ == "__main__":
             time.sleep(1)
             print("------------------------------------------------------------------------------\n")
 
+
+        print 'SAving eval data...'
+        fn_eval= args.resultpath + 'eval'
+        try:
+            finput = open(fn_eval + '.pkl', 'rb')
+            evaluator = pickle.load(finput)
+            time.sleep(4)
+            finput.close()
+        except IOError as e:
+            evaluator = Evaluator()
+        finally:
+            evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)] = {}
+            evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)]['actions_per_iter'] = actions_per_iteration
+            evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)]['reward_per_iter'] = reward_per_iteration
+            foutput = open(fn_eval+'.pkl', 'wb')
+            print evaluator.__dict__
+            pickle.dump(evaluator, foutput)
+            time.sleep(4)
+            foutput.close()
+
+        evaluator.plot_evaluation(iterations, actions_per_iteration, reward_per_iteration)
         raw_input('Press enter to continue...')
 
 

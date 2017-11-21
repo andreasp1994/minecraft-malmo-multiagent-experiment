@@ -6,7 +6,7 @@ class QLearningAgent(object):
         model because the Q-value of a state can be related directly to those of
         its neighbors. [Figure 21.8]
     """
-    def __init__(self, actions, gamma, Ne, Rplus, alpha=None,):
+    def __init__(self, actions, gamma, Ne, Rplus, Nf, alpha=None,):
         self.gamma = gamma
         self.all_act = actions
         self.Ne = Ne  # iteration limit in exploration function
@@ -14,7 +14,7 @@ class QLearningAgent(object):
         self.Q = defaultdict(float)
         self.Nsa = defaultdict(float)
         self.state_actions = defaultdict(float)
-        self.Nf = 9.0
+        self.Nf = Nf
         self.s = None
         self.a = None
         self.r = None
@@ -22,7 +22,7 @@ class QLearningAgent(object):
         if alpha:
             self.alpha = alpha
         else:
-            self.alpha = lambda n: 1/(1+n)  # udacity video
+            self.alpha = lambda n: 1./(1+n)
 
     def f(self, u, n):
         u""" Exploration function. Returns fixed Rplus untill
@@ -67,7 +67,6 @@ class QLearningAgent(object):
         self.Q[self.s, self.a] = reward
 
     def reset(self):
-        self.Nsa = defaultdict(float)
         self.s = self.a = self.r = None
 
     def process_perception(self, percept):
