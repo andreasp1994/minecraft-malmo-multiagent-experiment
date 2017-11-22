@@ -414,8 +414,8 @@ class AgentRealistic:
             a = self.q_learning_agent(percept, self.training)
             self.logger.debug('Utilities at state: (%s %s)' % (state[0], state[1]))
             self.logger.debug(self.q_learning_agent.all_utilities(state_str))
-            # if self.q_learning_visualization != None:
-            #     self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
+            if self.q_learning_visualization != None:
+                self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
             self.logger.debug('Requested action: %s' % a)
             idx_requested_action = self.get_action_index(a)
             action = self.__ExecuteActionForRealisticAgentWithNoisyTransitionModel__(idx_requested_action, 0.05)
@@ -424,8 +424,8 @@ class AgentRealistic:
             self.solution_report.addAction()
             reward = reward_sendcommand
             self.logger.debug('New agent state: %s, %s', state[0], state[1])
-            # if self.q_learning_visualization != None:
-            #     self.q_learning_visualization.drawQ()
+            if self.q_learning_visualization != None:
+                self.q_learning_visualization.drawQ()
             i += 1
 
     def run_agent_online(self, state_t):
@@ -434,7 +434,7 @@ class AgentRealistic:
 
         while state_t.is_mission_running:
             # Wait 0.5 sec
-            time.sleep(0.3)
+            time.sleep(0.5)
             # Get the world state
             state_t = self.agent_host.getWorldState()
             print state_t
@@ -711,8 +711,8 @@ class AgentSimple:
         """A* search is best-first graph search with f(n) = g(n)+h(n).
         You need to specify the h function when you call astar_search, or
         else in your Problem subclass."""
-        h = memoize(h or problem.h, 'h')
-        iterations, all_node_colors, node = self.best_first_graph_search(problem, lambda n: n.path_cost + h(n))
+        h = h or (lambda n: 0)
+        iterations, all_node_colors, node = self.best_first_graph_search(problem, lambda n: n.depth + h(n))
         return (iterations, all_node_colors, node)
 
     def best_first_graph_search(self, problem, f):
@@ -854,11 +854,12 @@ class AgentSimple:
     def init_logger(self):
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.DEBUG)
-        ch = logging.StreamHandler(sys.stdout)
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-        self.logger.addHandler(ch)
+        if not len(self.logger.handlers):
+            ch = logging.StreamHandler(sys.stdout)
+            ch.setLevel(logging.DEBUG)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            ch.setFormatter(formatter)
+            self.logger.addHandler(ch)
 
 
 #--------------------------------------------------------------------------------------
@@ -1135,11 +1136,11 @@ if __name__ == "__main__":
 
     #-- Define default arguments, in case you run the module as a script --#
     DEFAULT_STUDENT_GUID = '2140845P'
-    DEFAULT_AGENT_NAME   = 'Realistic'
+    DEFAULT_AGENT_NAME   = 'Simple'
     DEFAULT_MALMO_PATH   = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/Malmo-0.30.0-Mac-64bit_withBoost/' # HINT: Change this to your own path
     DEFAULT_AIMA_PATH    = '/Users/Antreas/Desktop/University_Of_Glasgow/Year_4/AI/aima-python/'  # HINT: Change this to your own path, forward slash only, should be the 2.7 version from https://www.dropbox.com/s/vulnv2pkbv8q92u/aima-python_python_v27_r001.zip?dl=0) or for Python 3.x get it from https://github.com/aimacode/aima-python
-    DEFAULT_MISSION_TYPE = 'medium'  #HINT: Choose between {small,medium,large}
-    DEFAULT_MISSION_SEED_MAX = 1    #HINT: How many different instances of the given mission (i.e. maze layout)
+    DEFAULT_MISSION_TYPE = 'small'  #HINT: Choose between {small,medium,large}
+    DEFAULT_MISSION_SEED_MAX = 3    #HINT: How many different instances of the given mission (i.e. maze layout)
     DEFAULT_REPEATS      = 1        #HINT: How many repetitions of the same maze layout
     DEFAULT_PORT         = 0
     DEFAULT_SAVE_PATH    = './results/'
@@ -1172,7 +1173,6 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from QLearningVisualization import QLearningVisualization
     from QLearningAgent import QLearningAgent
-    from Evaluator import Evaluator
 
     #-- Define the commandline arguments required to run the agents from command line --#
     parser = argparse.ArgumentParser()
@@ -1221,7 +1221,6 @@ if __name__ == "__main__":
 
     #-- Itereate a few different layout of the same mission stype --#
     for i_training_seed in range(0,args.missionseedmax):
-        i_training_seed = 1
         #-- Observe the full state space a prior i (only allowed for the simple agent!) ? --#
         if args.agentname.lower()=='simple' or args.offline:
             print('Get state-space representation using a AgentHelper...[note in v0.30 there is now an faster way of getting the state-space ]')            
@@ -1307,31 +1306,31 @@ if __name__ == "__main__":
                         foutput)  # Save the solution information in a specific file, HiNT:  It can be loaded with pickle.load(output) with read permissions to the file
             foutput.close()
 
-        print 'Saving eval data...'
-        fn_eval= args.resultpath + 'eval'
-        try:
-            finput = open(fn_eval + '.pkl', 'rb')
-            evaluator = pickle.load(finput)
-            time.sleep(4)
-            finput.close()
-        except IOError as e:
-            evaluator = Evaluator()
-        finally:
-            # evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)] = {}
-            # evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)]['actions_per_iter'] = actions_per_iteration
-            # evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)]['reward_per_iter'] = reward_per_iteration
-            evaluator.eval_data['small'][str(i_training_seed)] = {}
-            evaluator.eval_data['small'][str(i_training_seed)]['actions_per_iter'] = actions_per_iteration
-            evaluator.eval_data['small'][str(i_training_seed)]['reward_per_iter'] = reward_per_iteration
-            evaluator.eval_data['small'][str(i_training_seed)]['finished'] = solution_report.is_goal
-
-            foutput = open(fn_eval+'.pkl', 'wb')
-            print evaluator.__dict__
-            pickle.dump(evaluator, foutput)
-            time.sleep(4)
-            foutput.close()
-
-        evaluator.plot_evaluation(iterations, actions_per_iteration, reward_per_iteration)
+        # print 'Saving eval data...'
+        # fn_eval= args.resultpath + 'eval'
+        # try:
+        #     finput = open(fn_eval + '.pkl', 'rb')
+        #     evaluator = pickle.load(finput)
+        #     time.sleep(4)
+        #     finput.close()
+        # except IOError as e:
+        #     evaluator = Evaluator()
+        # finally:
+        #     # evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)] = {}
+        #     # evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)]['actions_per_iter'] = actions_per_iteration
+        #     # evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)]['reward_per_iter'] = reward_per_iteration
+        #     evaluator.eval_data['small'][str(i_training_seed)] = {}
+        #     evaluator.eval_data['small'][str(i_training_seed)]['actions_per_iter'] = actions_per_iteration
+        #     evaluator.eval_data['small'][str(i_training_seed)]['reward_per_iter'] = reward_per_iteration
+        #     evaluator.eval_data['small'][str(i_training_seed)]['finished'] = solution_report.is_goal
+        #
+        #     foutput = open(fn_eval+'.pkl', 'wb')
+        #     print evaluator.__dict__
+        #     pickle.dump(evaluator, foutput)
+        #     time.sleep(4)
+        #     foutput.close()
+        #
+        # evaluator.plot_evaluation(iterations, actions_per_iteration, reward_per_iteration)
 
 
     print("Done")
