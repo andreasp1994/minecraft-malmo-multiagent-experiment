@@ -437,6 +437,7 @@ class AgentRealistic:
             time.sleep(0.3)
             # Get the world state
             state_t = self.agent_host.getWorldState()
+            print state_t
 
             reward = 0
             for reward_t in state_t.rewards:
@@ -455,11 +456,11 @@ class AgentRealistic:
                 grid = oracle.get(u'grid', 0)
                 state = self.get_agent_position(state_t)
                 state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
-                self.logger.debug('Current state: %s, %s' % (state[0], state[1]))
+
                 percept = {}
                 percept['state'] = state_str
-                if reward < (-30):
-                    print 'Timeout reward!'
+                if reward < (-50):
+                    self.logger.debug('Agent timed out!')
                     reward = 0  # eliminate timeout reward
                 percept['reward'] = reward
                 percept['state_actions'] = []
@@ -472,6 +473,22 @@ class AgentRealistic:
                     percept['state_actions'].append("movenorth 1")
                 if grid[7] != 'stained_hardened_clay' and grid[7] != 'stone':
                     percept['state_actions'].append("movesouth 1")
+
+                if not state_t.is_mission_running and reward > 50:
+                    self.logger.debug('Found goal!')
+                    action_simulations = {"movenorth 1": (0, -1), "movesouth 1": (0, 1), "movewest 1": (-1, 0),
+                                          "moveeast 1": (1, 0)}
+                    state = map(sum, zip(state, action_simulations[action]))
+                    self.logger.debug('Current state: %s, %s' % (state[0], state[1]))
+
+                    self.q_learning_agent.finished(reward)
+                    self.q_learning_agent(percept, self.training)
+                    self.q_learning_agent.reset()
+                    if self.q_learning_visualization != None:
+                        self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
+                    break
+
+                self.logger.debug('Current state: %s, %s' % (state[0], state[1]))
 
                 self.logger.debug('Utilities at state: (%s %s)' % (state[0], state[1]))
                 self.logger.debug(list(self.q_learning_agent.all_utilities(state_str)))
@@ -492,52 +509,7 @@ class AgentRealistic:
             if self.q_learning_visualization != None:
                 self.q_learning_visualization.drawQ()
 
-        time.sleep(0.5)
-
         self.logger.debug('Mission finished!')
-
-        # Get the world state
-        state_t = self.agent_host.getWorldState()
-
-        reward = 0
-        for reward_t in state_t.rewards:
-            print "Reward_t:", reward_t.getValue()
-            reward += reward_t.getValue()
-            # reward_cumulative += reward_t.getValue()
-            self.solution_report.addReward(reward_t.getValue(), datetime.datetime.now())
-            print("Cummulative reward so far:", reward)
-
-            # Check if anything went wrong along the way
-        for error in state_t.errors:
-            print("Error:", error.text)
-
-        if state_t.number_of_observations_since_last_state > 0:  # Has any Oracle-like and/or internal sensor observations come in?
-            msg = state_t.observations[-1].text  # Get the detailed for the last observed state
-            oracle = json.loads(msg)  # Parse the Oracle JSON
-            grid = oracle.get(u'grid', 0)
-            print grid
-            percept = {}
-            percept['state'] = state_str
-            if reward < (-30):
-                print 'Timeout reward!'
-                reward = 0 # eliminate timeout reward
-            percept['reward'] = reward
-            percept['state_actions'] = []
-
-            if grid[3] != 'stained_hardened_clay' and grid[3] != 'stone':
-                percept['state_actions'].append("movewest 1")
-            if grid[5] != 'stained_hardened_clay' and grid[5] != 'stone':
-                percept['state_actions'].append("moveeast 1")
-            if grid[1] != 'stained_hardened_clay' and grid[1] != 'stone':
-                percept['state_actions'].append("movenorth 1")
-            if grid[7] != 'stained_hardened_clay' and grid[7] != 'stone':
-                percept['state_actions'].append("movesouth 1")
-
-            self.q_learning_agent.finished(reward)
-            self.q_learning_agent(percept,self.training)
-            self.q_learning_agent.reset()
-            if self.q_learning_visualization != None:
-                self.q_learning_visualization.drawQ(curr_x=state[0], curr_y=state[1])
 
     def update_state_offline(self, state, action):
         state_str = "S_%d_%d" % (int(state[0]), int(state[1]))
@@ -1173,6 +1145,9 @@ if __name__ == "__main__":
     DEFAULT_SAVE_PATH    = './results/'
     DEFAULT_RUN_OFFLINE = False
     DEFAULT_VISUALIZE_PROCESS = False
+    DEFAULT_LOAD_PATH = None
+    DEFAULT_SAVE_TRAIN_PATH = None
+
 
     #-- Import required modules --#
     import os
@@ -1212,6 +1187,8 @@ if __name__ == "__main__":
     parser.add_argument("-r" , "--resultpath"       , type=str, help="the path where the results are saved" , default=DEFAULT_SAVE_PATH)
     parser.add_argument("-f" , "--offline"       , type=bool, help="if this is set to true the realistic agent runs offline." , default=DEFAULT_RUN_OFFLINE)
     parser.add_argument("-v" , "--visualize"       , type=bool, help="if this is set to true the solutions for realistic and simple agents are visualized." , default=DEFAULT_VISUALIZE_PROCESS)
+    parser.add_argument("-l" , "--load"       , type=str, help="path to load pickled q-table" , default=DEFAULT_LOAD_PATH)
+    parser.add_argument("-e" , "--save"       , type=str, help="path to save pickled q-table" , default=DEFAULT_SAVE_TRAIN_PATH)
     args = parser.parse_args()
     print args     
 
@@ -1239,20 +1216,12 @@ if __name__ == "__main__":
     cmd = 'python myagents.py -a ' + args.agentname + ' -s ' + str(args.missionseedmax) + ' -n ' + str(args.nrepeats) + ' -t ' + args.missiontype + ' -g ' + args.studentguid + ' -p ' + args.malmopath + ' -x ' + str(args.malmoport)
     print(cmd)
 
-    # # Plot comparison
-    # fn_eval = args.resultpath + 'eval'
-    # finput = open(fn_eval + '.pkl', 'rb')
-    # evaluator = pickle.load(finput)
-    # time.sleep(3)
-    # finput.close()
-    # # print evaluator.__dict__
-    # evaluator.plot_comparison(range(0,200), evaluator.eval_data['Nf'])
-
     print('Instantiate an agent interface/api to Malmo')
     agent_host = MalmoPython.AgentHost()
 
     #-- Itereate a few different layout of the same mission stype --#
     for i_training_seed in range(0,args.missionseedmax):
+        i_training_seed = 1
         #-- Observe the full state space a prior i (only allowed for the simple agent!) ? --#
         if args.agentname.lower()=='simple' or args.offline:
             print('Get state-space representation using a AgentHelper...[note in v0.30 there is now an faster way of getting the state-space ]')            
@@ -1281,12 +1250,26 @@ if __name__ == "__main__":
 
             if agent_to_be_evaluated == None:   #keep states between iterations
                 agent_to_be_evaluated = eval(agent_name+'(agent_host,args.malmoport,args.missiontype,i_training_seed,solution_report,state_space)')
+                print 'Load existing training data...'
+                if args.agentname.lower() == 'realistic' and args.load != None:
+                    fn_load = args.load
+                    try:
+                        finput = open(fn_load , 'rb')
+                        agent_to_be_evaluated.q_learning_agent.Q = pickle.load(finput)
+                        finput.close()
+                    except IOError as e:
+                        print 'Trained data file not found...'
+
             else:
                 agent_to_be_evaluated.solution_report = solution_report
 
             if args.agentname.lower()=='simple' or args.agentname.lower()=='realistic':
                 if agent_to_be_evaluated.visualize != args.visualize:
                     agent_to_be_evaluated.set_visualize(args.visualize)
+
+            if i_rep == (args.nrepeats-1) and state_space != None and args.agentname.lower() == 'realistic':
+                agent_to_be_evaluated.state_space = None
+                agent_to_be_evaluated.stop_training()
 
             print('Run the agent, time it and log the performance...')
             solution_report.start() # start the timer (may be overwritten in the agent to provide a fair comparison)            
@@ -1312,19 +1295,19 @@ if __name__ == "__main__":
             pickle.dump(agent_to_be_evaluated.solution_report,foutput) # Save the solution information in a specific file, HiNT:  It can be loaded with pickle.load(output) with read permissions to the file
             foutput.close()
 
-            # # You can reload the results for this instance using...
-            # for i in range(0,3):
-            #     fn_result = args.resultpath + 'solution_' + args.studentguid + '_' + agent_name + '_' +args.missiontype + '_' + str(i) + '_' + str(i_rep)
-            #     finput = open(fn_result+'.pkl', 'rb')
-            #     res =  pickle.load(finput)
-            #     finput.close()
-            
             print('Sleep a sec to make sure the client is ready for next mission/agent variation...')            
             time.sleep(1)
             print("------------------------------------------------------------------------------\n")
 
+        if args.agentname.lower() == 'realistic' and args.save != None:
+            print('Saving q_table for later use...')
+            save_path = args.save
+            foutput = open(save_path, 'wb')
+            pickle.dump(agent_to_be_evaluated.q_learning_agent.Q,
+                        foutput)  # Save the solution information in a specific file, HiNT:  It can be loaded with pickle.load(output) with read permissions to the file
+            foutput.close()
 
-        print 'SAving eval data...'
+        print 'Saving eval data...'
         fn_eval= args.resultpath + 'eval'
         try:
             finput = open(fn_eval + '.pkl', 'rb')
@@ -1334,9 +1317,14 @@ if __name__ == "__main__":
         except IOError as e:
             evaluator = Evaluator()
         finally:
-            evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)] = {}
-            evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)]['actions_per_iter'] = actions_per_iteration
-            evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)]['reward_per_iter'] = reward_per_iteration
+            # evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)] = {}
+            # evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)]['actions_per_iter'] = actions_per_iteration
+            # evaluator.eval_data['Nf'][str(agent_to_be_evaluated.q_learning_agent.Nf)]['reward_per_iter'] = reward_per_iteration
+            evaluator.eval_data['small'][str(i_training_seed)] = {}
+            evaluator.eval_data['small'][str(i_training_seed)]['actions_per_iter'] = actions_per_iteration
+            evaluator.eval_data['small'][str(i_training_seed)]['reward_per_iter'] = reward_per_iteration
+            evaluator.eval_data['small'][str(i_training_seed)]['finished'] = solution_report.is_goal
+
             foutput = open(fn_eval+'.pkl', 'wb')
             print evaluator.__dict__
             pickle.dump(evaluator, foutput)
@@ -1344,7 +1332,6 @@ if __name__ == "__main__":
             foutput.close()
 
         evaluator.plot_evaluation(iterations, actions_per_iteration, reward_per_iteration)
-        raw_input('Press enter to continue...')
 
 
     print("Done")
